@@ -14,6 +14,18 @@ It is designed as a lightweight personal library and reader for common book, doc
 - Bookmarks and reader display preferences
 - Library search and folder navigation
 
+## Screenshots
+
+<p align="center">
+  <img src="Captures/1001.png" alt="Simple Lector screenshot 1" width="48%" />
+  <img src="Captures/1002.png" alt="Simple Lector screenshot 2" width="48%" />
+</p>
+
+<p align="center">
+  <img src="Captures/1003.png" alt="Simple Lector screenshot 3" width="48%" />
+  <img src="Captures/1004.png" alt="Simple Lector screenshot 4" width="48%" />
+</p>
+
 ## Debug / Development
 
 Build the Android debug app on Linux/macOS:
