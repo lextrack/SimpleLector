@@ -1,0 +1,30 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Android build outputs
+*.apk
+*.aab
+*.ap_
+*.dm
+output-metadata.json
+/app/release/
+/app/build/outputs/
+/app/build/intermediates/
+/app/build/tmp/
+
+# Baseline/build profile artifacts
+baseline-prof.txt
+**/baselineProfiles/
