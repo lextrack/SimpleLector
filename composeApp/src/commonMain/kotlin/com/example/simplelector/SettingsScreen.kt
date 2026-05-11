@@ -31,8 +31,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+
+private const val SimpleLectorGithubUrl = "https://github.com/lextrack/SimpleLector"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,6 +46,7 @@ fun SettingsScreen(
     onResetAppData: (() -> Unit)?,
 ) {
     val strings = rememberAppStrings()
+    val uriHandler = LocalUriHandler.current
     val showResetConfirmation = remember { mutableStateOf(false) }
     val selectedBookFormat = state.selectedBook?.format?.lowercase()
     val showTextReadingControls = selectedBookFormat !in setOf("pdf", "cbz", "cbr")
@@ -245,9 +249,12 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    strings.versionFormat("1.0.2"),
+                    strings.versionFormat("1.0.3"),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                TextButton(onClick = { uriHandler.openUri(SimpleLectorGithubUrl) }) {
+                    Text(strings.githubRepository)
+                }
             }
         }
     }
