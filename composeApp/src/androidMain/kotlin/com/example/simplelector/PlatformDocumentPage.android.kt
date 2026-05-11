@@ -523,6 +523,8 @@ private fun pdfPageBackgroundColor(theme: ReaderTheme): Int =
     when (theme) {
         ReaderTheme.Dark -> android.graphics.Color.WHITE
         ReaderTheme.Sepia -> android.graphics.Color.rgb(240, 223, 192)
-        ReaderTheme.DarkSepia -> android.graphics.Color.rgb(27, 20, 15)
+        // PDFs render their original glyph colors, so a dark page background can leave black text unreadable.
+        // Keep the surrounding reader chrome dark sepia, but render the PDF page itself on warm light paper.
+        ReaderTheme.DarkSepia -> android.graphics.Color.rgb(224, 206, 178)
         ReaderTheme.Light -> android.graphics.Color.rgb(255, 252, 247)
     }
