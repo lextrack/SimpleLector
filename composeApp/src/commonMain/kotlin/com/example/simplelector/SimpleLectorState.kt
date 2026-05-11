@@ -602,7 +602,7 @@ class SimpleLectorState {
     }
 
     private fun invalidateLibraryCaches() {
-        // Conservado como punto central por claridad; la navegación ya no depende de cachés manuales.
+
     }
 
     private fun buildLibraryFolderSnapshot(
