@@ -81,6 +81,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -89,6 +90,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+private fun carouselCardWidth(): Dp = if (isDesktopPlatform()) 204.dp else 184.dp
+
+private fun carouselCoverHeight(): Dp = if (isDesktopPlatform()) 252.dp else 228.dp
+
+private fun folderCarouselIconSize(): Dp = if (isDesktopPlatform()) 96.dp else 88.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -851,7 +858,7 @@ private fun HorizontalCarousel(
     val scrollState = rememberScrollState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val density = LocalDensity.current
-    val cardWidth = 184.dp
+    val cardWidth = carouselCardWidth()
     val itemSpacing = 14.dp
     var hasRestoredPosition by remember(carouselKey) { mutableStateOf(false) }
     var snapPending by remember(carouselKey) { mutableStateOf(false) }
@@ -1002,6 +1009,8 @@ private fun BookCarouselCard(
         animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
         label = "bookCarouselTranslationY",
     )
+    val cardWidth = carouselCardWidth()
+    val coverHeight = carouselCoverHeight()
     Card(
         modifier = Modifier
             .libraryEntryAnimation(
@@ -1009,7 +1018,7 @@ private fun BookCarouselCard(
                 order = entryAnimationOrder,
                 animateOnFirstAppearance = true,
             )
-            .width(184.dp)
+            .width(cardWidth)
             .zIndex(if (isSelected) 1f else 0f)
             .graphicsLayer {
                 scaleX = scale
@@ -1033,7 +1042,7 @@ private fun BookCarouselCard(
                 onCoverLoaded = onCoverLoaded,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(228.dp),
+                    .height(coverHeight),
             )
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(book.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -1080,6 +1089,9 @@ private fun FolderCarouselCard(
         animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
         label = "folderCarouselTranslationY",
     )
+    val cardWidth = carouselCardWidth()
+    val coverHeight = carouselCoverHeight()
+    val iconSize = folderCarouselIconSize()
     Card(
         modifier = Modifier
             .libraryEntryAnimation(
@@ -1087,7 +1099,7 @@ private fun FolderCarouselCard(
                 order = entryAnimationOrder,
                 animateOnFirstAppearance = true,
             )
-            .width(184.dp)
+            .width(cardWidth)
             .zIndex(if (isSelected) 1f else 0f)
             .graphicsLayer {
                 scaleX = scale
@@ -1106,7 +1118,7 @@ private fun FolderCarouselCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(228.dp)
+                    .height(coverHeight)
                     .clip(RoundedCornerShape(12.dp))
                     .background(
                         Brush.verticalGradient(
@@ -1118,7 +1130,7 @@ private fun FolderCarouselCard(
                 Icon(
                     imageVector = Icons.Filled.Folder,
                     contentDescription = null,
-                    modifier = Modifier.size(88.dp),
+                    modifier = Modifier.size(iconSize),
                     tint = Color(0xFF664700),
                 )
             }
