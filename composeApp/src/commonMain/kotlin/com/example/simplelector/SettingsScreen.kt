@@ -249,7 +249,7 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    strings.versionFormat("1.0.3"),
+                    strings.versionFormat("1.0.4"),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 TextButton(onClick = { uriHandler.openUri(SimpleLectorGithubUrl) }) {
