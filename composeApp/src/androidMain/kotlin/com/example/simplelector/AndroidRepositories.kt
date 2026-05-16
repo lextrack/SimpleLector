@@ -146,6 +146,9 @@ class AndroidReaderRepository(
         withContext(Dispatchers.IO) {
             runCatching {
                 val uri = Uri.parse(book.id)
+                if (isTrashedDocument(contentResolver, uri)) {
+                    throw IllegalStateException(MissingBookMessage)
+                }
                 when (book.format.lowercase()) {
                     "pdf" -> {
                         contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
@@ -407,7 +410,10 @@ private fun scanAndroidFolder(
                         scanDocument(childDocumentId, childPath)
                     } else {
                         val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childDocumentId)
-                        if (name.isBlank()) {
+                        if (name.isBlank() || isTrashedDocumentName(name)) {
+                            continue
+                        }
+                        if (isTrashedDocument(contentResolver, documentUri)) {
                             continue
                         }
                         buildBookFromPath(
@@ -559,6 +565,26 @@ private fun loadAndroidScannableBook(
     }.getOrElse {
         AndroidScannableBookResult(book = null, hadError = true)
     }
+}
+
+private fun isTrashedDocument(
+    contentResolver: ContentResolver,
+    uri: Uri,
+): Boolean {
+    val projection = arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+    return runCatching {
+        contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            if (!cursor.moveToFirst()) return@use false
+            val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+            if (nameIndex < 0) return@use false
+            isTrashedDocumentName(cursor.getString(nameIndex).orEmpty())
+        } ?: false
+    }.getOrDefault(false)
+}
+
+private fun isTrashedDocumentName(name: String): Boolean {
+    val normalized = name.trim().lowercase()
+    return normalized.startsWith(".trashed")
 }
 
 private fun renderPdfCover(
