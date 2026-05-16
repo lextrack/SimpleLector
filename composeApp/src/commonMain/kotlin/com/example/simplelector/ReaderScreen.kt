@@ -334,6 +334,7 @@ fun ReaderScreen(
                 val pageContent = readerDocument?.pages?.getOrNull((pageNumber - 1).coerceAtLeast(0))
                 val platformRendered = PlatformDocumentPage(
                     sourceId = activeBook.id,
+                    sourceVersionKey = activeBook.signature,
                     format = activeBook.format,
                     pageNumber = pageNumber,
                     theme = state.readerTheme,

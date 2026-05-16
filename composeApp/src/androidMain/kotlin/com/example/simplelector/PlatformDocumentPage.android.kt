@@ -48,20 +48,43 @@ import java.io.File
 import java.util.zip.ZipInputStream
 
 private const val CbzRenderMaxImageDimension = 2_000
+private const val NativeImageLogTag = "SimpleLectorNative"
 
 private data class VisualPageCacheKey(
     val sourceId: String,
+    val sourceVersionKey: String,
     val format: String,
     val pageNumber: Int,
     val theme: ReaderTheme,
 )
 
 private object VisualPageCache {
-    private const val MAX_ENTRIES = 8
+    private const val MAX_ENTRIES = 16
     private val pages = LinkedHashMap<VisualPageCacheKey, Bitmap>(MAX_ENTRIES, 0.75f, true)
+    private val inFlight = mutableSetOf<VisualPageCacheKey>()
 
     @Synchronized
     fun get(key: VisualPageCacheKey): Bitmap? = pages[key]
+
+    @Synchronized
+    fun size(): Int = pages.size
+
+    @Synchronized
+    fun markInFlight(key: VisualPageCacheKey): Boolean =
+        if (key in inFlight) {
+            false
+        } else {
+            inFlight += key
+            true
+        }
+
+    @Synchronized
+    fun clearInFlight(key: VisualPageCacheKey) {
+        inFlight -= key
+    }
+
+    @Synchronized
+    fun isInFlight(key: VisualPageCacheKey): Boolean = key in inFlight
 
     @Synchronized
     fun put(key: VisualPageCacheKey, bitmap: Bitmap) {
@@ -93,6 +116,7 @@ private object CbzPageIndexCache {
 @Composable
 actual fun PlatformDocumentPage(
     sourceId: String,
+    sourceVersionKey: String,
     format: String,
     pageNumber: Int,
     theme: ReaderTheme,
@@ -106,13 +130,45 @@ actual fun PlatformDocumentPage(
     if (normalizedFormat != "pdf" && normalizedFormat != "cbz" && normalizedFormat != "cbr") return false
 
     val context = LocalContext.current
-    var renderError by remember(sourceId, normalizedFormat, pageNumber, theme) { mutableStateOf<Throwable?>(null) }
-    val bitmap by produceState<Bitmap?>(initialValue = null, sourceId, normalizedFormat, pageNumber, theme) {
+    var renderError by remember(sourceId, sourceVersionKey, normalizedFormat, pageNumber, theme) { mutableStateOf<Throwable?>(null) }
+    val bitmap by produceState<Bitmap?>(initialValue = null, sourceId, sourceVersionKey, normalizedFormat, pageNumber, theme) {
         value = null
         renderError = null
-        val cacheKey = VisualPageCacheKey(sourceId, normalizedFormat, pageNumber, theme)
+        val cacheKey = VisualPageCacheKey(sourceId, sourceVersionKey, normalizedFormat, pageNumber, theme)
+        val shouldLogCache = normalizedFormat == "cbz" || normalizedFormat == "cbr"
         VisualPageCache.get(cacheKey)?.let {
+            if (shouldLogCache) {
+                debugLog(
+                    NativeImageLogTag,
+                    "Page cache HIT format=$normalizedFormat page=$pageNumber size=${VisualPageCache.size()}",
+                )
+            }
             value = it
+            return@produceState
+        }
+        if (shouldLogCache) {
+            debugLog(
+                NativeImageLogTag,
+                "Page cache MISS format=$normalizedFormat page=$pageNumber size=${VisualPageCache.size()}",
+            )
+        }
+        if (!VisualPageCache.markInFlight(cacheKey)) {
+            if (shouldLogCache) {
+                debugLog(
+                    NativeImageLogTag,
+                    "Page cache WAIT format=$normalizedFormat page=$pageNumber size=${VisualPageCache.size()}",
+                )
+            }
+            val awaited: Bitmap? = withContext(Dispatchers.IO) {
+                var resolved: Bitmap? = null
+                while (resolved == null && VisualPageCache.isInFlight(cacheKey)) {
+                    resolved = VisualPageCache.get(cacheKey)
+                    if (resolved != null) break
+                    kotlinx.coroutines.delay(16)
+                }
+                resolved ?: VisualPageCache.get(cacheKey)
+            }
+            value = awaited
             return@produceState
         }
         try {
@@ -121,6 +177,7 @@ actual fun PlatformDocumentPage(
                     contentResolver = context.contentResolver,
                     cacheDir = context.cacheDir,
                     uri = Uri.parse(sourceId),
+                    sourceVersionKey = sourceVersionKey,
                     format = normalizedFormat,
                     pageNumber = pageNumber,
                     theme = theme,
@@ -128,35 +185,72 @@ actual fun PlatformDocumentPage(
             }
             value = rendered?.also {
                 VisualPageCache.put(cacheKey, it)
+                if (shouldLogCache) {
+                    debugLog(
+                        NativeImageLogTag,
+                        "Page cache STORE format=$normalizedFormat page=$pageNumber size=${VisualPageCache.size()}",
+                    )
+                }
             }
         } catch (error: Throwable) {
             renderError = error
+        } finally {
+            VisualPageCache.clearInFlight(cacheKey)
         }
     }
     LaunchedEffect(renderError) {
         renderError?.let { onRenderError?.invoke(it) }
     }
 
-    LaunchedEffect(sourceId, normalizedFormat, pageNumber, theme) {
+    LaunchedEffect(sourceId, sourceVersionKey, normalizedFormat, pageNumber, theme) {
         withContext(Dispatchers.IO) {
+            val shouldLogCache = normalizedFormat == "cbz" || normalizedFormat == "cbr"
             listOf(pageNumber - 1, pageNumber + 1)
                 .filter { it > 0 }
                 .forEach { adjacentPage ->
-                    val cacheKey = VisualPageCacheKey(sourceId, normalizedFormat, adjacentPage, theme)
+                    val cacheKey = VisualPageCacheKey(sourceId, sourceVersionKey, normalizedFormat, adjacentPage, theme)
                     if (VisualPageCache.get(cacheKey) == null) {
+                        if (!VisualPageCache.markInFlight(cacheKey)) {
+                            if (shouldLogCache) {
+                                debugLog(
+                                    NativeImageLogTag,
+                                    "Prefetch SKIP inflight format=$normalizedFormat page=$adjacentPage from=$pageNumber size=${VisualPageCache.size()}",
+                                )
+                            }
+                            return@forEach
+                        }
+                        if (shouldLogCache) {
+                            debugLog(
+                                NativeImageLogTag,
+                                "Prefetch MISS format=$normalizedFormat page=$adjacentPage from=$pageNumber size=${VisualPageCache.size()}",
+                            )
+                        }
                         try {
                             val rendered = renderVisualDocumentPage(
                                 contentResolver = context.contentResolver,
                                 cacheDir = context.cacheDir,
                                 uri = Uri.parse(sourceId),
+                                sourceVersionKey = sourceVersionKey,
                                 format = normalizedFormat,
                                 pageNumber = adjacentPage,
                                 theme = theme,
                             ) ?: return@forEach
                             VisualPageCache.put(cacheKey, rendered)
+                            if (shouldLogCache) {
+                                debugLog(
+                                    NativeImageLogTag,
+                                    "Prefetch STORE format=$normalizedFormat page=$adjacentPage from=$pageNumber size=${VisualPageCache.size()}",
+                                )
+                            }
                         } catch (_: Throwable) {
-
+                        } finally {
+                            VisualPageCache.clearInFlight(cacheKey)
                         }
+                    } else if (shouldLogCache) {
+                        debugLog(
+                            NativeImageLogTag,
+                            "Prefetch HIT format=$normalizedFormat page=$adjacentPage from=$pageNumber size=${VisualPageCache.size()}",
+                        )
                     }
                 }
         }
@@ -296,24 +390,25 @@ private fun renderVisualDocumentPage(
     contentResolver: android.content.ContentResolver,
     cacheDir: File,
     uri: Uri,
+    sourceVersionKey: String,
     format: String,
     pageNumber: Int,
     theme: ReaderTheme,
 ): Bitmap? =
     when (format) {
         "pdf" -> renderPdfPage(contentResolver, uri, pageNumber, theme)
-        "cbz" -> renderCbzPage(contentResolver, cacheDir, uri, pageNumber)
-        "cbr" -> renderCbrPage(contentResolver, cacheDir, uri, pageNumber)
+        "cbz" -> renderCbzPage(contentResolver, uri, sourceVersionKey, pageNumber)
+        "cbr" -> renderCbrPage(contentResolver, cacheDir, uri, sourceVersionKey, pageNumber)
         else -> null
     }
 
 private fun renderCbzPage(
     contentResolver: android.content.ContentResolver,
-    cacheDir: File,
     uri: Uri,
+    sourceVersionKey: String,
     pageNumber: Int,
 ): Bitmap? {
-    val pagePaths = loadCbzPageIndex(contentResolver, uri)
+    val pagePaths = loadCbzPageIndex(contentResolver, uri, sourceVersionKey)
     val targetPath = pagePaths.getOrNull((pageNumber - 1).coerceAtLeast(0)) ?: return null
 
     contentResolver.openInputStream(uri)?.use { input ->
@@ -321,12 +416,11 @@ private fun renderCbzPage(
             while (true) {
                 val entry = zip.nextEntry ?: break
                 if (!entry.isDirectory && normalizeCbzEntryPath(entry.name) == targetPath) {
-                    val tempFile = spillCbzZipEntryToTempFile(zip, cacheDir) ?: return null
-                    return try {
-                        decodeCbzBitmapFromFile(tempFile, CbzRenderMaxImageDimension)
-                    } finally {
-                        tempFile.delete()
-                    }
+                    return decodeCbzBitmapFromBytes(
+                        encodedBytes = zip.readBytes(),
+                        sourceLabel = targetPath,
+                        maxDimension = CbzRenderMaxImageDimension,
+                    )
                 }
                 zip.closeEntry()
             }
@@ -339,27 +433,24 @@ private fun renderCbrPage(
     contentResolver: android.content.ContentResolver,
     cacheDir: File,
     uri: Uri,
+    sourceVersionKey: String,
     pageNumber: Int,
 ): Bitmap? {
-    val pagePaths = loadCbrPageIndex(contentResolver, cacheDir, uri)
+    val pagePaths = loadCbrPageIndex(contentResolver, cacheDir, uri, sourceVersionKey)
     val targetPath = pagePaths.getOrNull((pageNumber - 1).coerceAtLeast(0)) ?: return null
 
-    return withTempAndroidCbrArchive(contentResolver, cacheDir, uri) { archive ->
+    return withTempAndroidCbrArchive(contentResolver, cacheDir, uri, sourceVersionKey) { archive ->
         var renderedBitmap: Bitmap? = null
         for (header in archive.fileHeaders) {
             if (header.isDirectory) continue
             if (normalizeCbzEntryPath(header.fileName.orEmpty()) != targetPath) continue
             val entryInput = archive.getInputStream(header) ?: break
-            val tempFile = File.createTempFile("simplelector-reader-", ".img", cacheDir)
-            renderedBitmap = try {
-                entryInput.use {
-                    tempFile.outputStream().buffered().use { output ->
-                        it.copyTo(output)
-                    }
-                }
-                decodeCbzBitmapFromFile(tempFile, CbzRenderMaxImageDimension)
-            } finally {
-                tempFile.delete()
+            renderedBitmap = entryInput.use {
+                decodeCbzBitmapFromBytes(
+                    encodedBytes = it.readBytes(),
+                    sourceLabel = targetPath,
+                    maxDimension = CbzRenderMaxImageDimension,
+                )
             }
             break
         }
@@ -370,8 +461,10 @@ private fun renderCbrPage(
 private fun loadCbzPageIndex(
     contentResolver: android.content.ContentResolver,
     uri: Uri,
+    sourceVersionKey: String,
 ): List<String> {
-    CbzPageIndexCache.get(uri.toString())?.let { return it }
+    val sourceCacheKey = "${uri}|$sourceVersionKey"
+    CbzPageIndexCache.get(sourceCacheKey)?.let { return it }
 
     val pages = mutableListOf<String>()
     contentResolver.openInputStream(uri)?.use { input ->
@@ -390,7 +483,7 @@ private fun loadCbzPageIndex(
     } ?: throw IllegalStateException(appStrings().missingBookMessage)
 
     val sortedPages = pages.sortedWith(compareByNaturalCbzEntryPath<String> { it })
-    CbzPageIndexCache.put(uri.toString(), sortedPages)
+    CbzPageIndexCache.put(sourceCacheKey, sortedPages)
     return sortedPages
 }
 
@@ -398,11 +491,13 @@ private fun loadCbrPageIndex(
     contentResolver: android.content.ContentResolver,
     cacheDir: File,
     uri: Uri,
+    sourceVersionKey: String,
 ): List<String> {
-    CbzPageIndexCache.get(uri.toString())?.let { return it }
+    val sourceCacheKey = "${uri}|$sourceVersionKey"
+    CbzPageIndexCache.get(sourceCacheKey)?.let { return it }
 
     val pages = mutableListOf<String>()
-    withTempAndroidCbrArchive(contentResolver, cacheDir, uri) { archive ->
+    withTempAndroidCbrArchive(contentResolver, cacheDir, uri, sourceVersionKey) { archive ->
         archive.fileHeaders.forEach { header ->
             if (header.isDirectory) return@forEach
             val path = normalizeCbzEntryPath(header.fileName.orEmpty())
@@ -413,30 +508,20 @@ private fun loadCbrPageIndex(
     } ?: throw IllegalStateException(appStrings().missingBookMessage)
 
     val sortedPages = pages.sortedWith(compareByNaturalCbzEntryPath<String> { it })
-    CbzPageIndexCache.put(uri.toString(), sortedPages)
+    CbzPageIndexCache.put(sourceCacheKey, sortedPages)
     return sortedPages
-}
-
-private fun spillCbzZipEntryToTempFile(
-    zip: ZipInputStream,
-    cacheDir: File,
-): File? {
-    val tempFile = File.createTempFile("simplelector-reader-", ".img", cacheDir)
-    return runCatching {
-        tempFile.outputStream().buffered().use { output ->
-            zip.copyTo(output)
-        }
-        tempFile
-    }.getOrElse {
-        tempFile.delete()
-        null
-    }
 }
 
 private fun decodeCbzBitmapFromFile(
     file: File,
     maxDimension: Int,
 ): Bitmap? {
+    AndroidNativeImageBridge.decodeScaledBitmapFile(file, maxDimension)?.let { return it }
+    debugLog(
+        NativeImageLogTag,
+        "Falling back to BitmapFactory for reader image ${file.name} (maxDimension=$maxDimension)",
+    )
+
     val bounds = BitmapFactory.Options().apply {
         inJustDecodeBounds = true
     }
@@ -448,6 +533,34 @@ private fun decodeCbzBitmapFromFile(
         inPreferredConfig = Bitmap.Config.RGB_565
     }
     return BitmapFactory.decodeFile(file.absolutePath, options)
+}
+
+private fun decodeCbzBitmapFromBytes(
+    encodedBytes: ByteArray,
+    sourceLabel: String,
+    maxDimension: Int,
+): Bitmap? {
+    AndroidNativeImageBridge.decodeScaledBitmapBytes(
+        encodedBytes = encodedBytes,
+        maxDimension = maxDimension,
+        sourceLabel = sourceLabel,
+    )?.let { return it }
+    debugLog(
+        NativeImageLogTag,
+        "Falling back to BitmapFactory for reader image $sourceLabel (maxDimension=$maxDimension)",
+    )
+
+    val bounds = BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    BitmapFactory.decodeByteArray(encodedBytes, 0, encodedBytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+    val options = BitmapFactory.Options().apply {
+        inSampleSize = calculateCbzInSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
+        inPreferredConfig = Bitmap.Config.RGB_565
+    }
+    return BitmapFactory.decodeByteArray(encodedBytes, 0, encodedBytes.size, options)
 }
 
 private fun calculateCbzInSampleSize(

@@ -33,6 +33,7 @@ private val UnsupportedCbrRar5Message: String
     get() = appStrings().unsupportedCbrRar5Message
 private const val CbzCoverMaxImageDimension = 512
 private const val CbzCompressedImageQuality = 82
+private const val NativeImageLogTag = "SimpleLectorNative"
 
 class AndroidLibraryRepository(
     private val context: Context,
@@ -145,9 +146,6 @@ class AndroidReaderRepository(
         withContext(Dispatchers.IO) {
             runCatching {
                 val uri = Uri.parse(book.id)
-                if (isTrashedDocument(contentResolver, uri)) {
-                    throw IllegalStateException(MissingBookMessage)
-                }
                 when (book.format.lowercase()) {
                     "pdf" -> {
                         contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
@@ -181,7 +179,7 @@ class AndroidReaderRepository(
                     }
                     "cbz" -> buildVisualReaderDocument(book.totalPages)
                     "cbr" -> {
-                        if (!canOpenAndroidCbr(contentResolver, context.cacheDir, uri)) {
+                        if (!canOpenAndroidCbr(contentResolver, context.cacheDir, uri, book.signature)) {
                             throw IllegalStateException(UnsupportedCbrRar5Message)
                         }
                         buildVisualReaderDocument(book.totalPages)
@@ -201,7 +199,7 @@ class AndroidReaderRepository(
             val generated = when (book.format.lowercase()) {
                 "epub" -> extractAndroidEpubCover(contentResolver, context.cacheDir, uri)
                 "cbz" -> extractAndroidCbzCover(contentResolver, context.cacheDir, uri)
-                "cbr" -> extractAndroidCbrCover(contentResolver, context.cacheDir, uri)
+                "cbr" -> extractAndroidCbrCover(contentResolver, context.cacheDir, uri, book.signature)
                 "pdf" -> renderPdfCover(contentResolver, uri)
                 else -> null
             }
@@ -330,6 +328,11 @@ private data class AndroidScanFolderResult(
     val hadErrors: Boolean,
 )
 
+private data class AndroidScannableBookResult(
+    val book: Book?,
+    val hadError: Boolean,
+)
+
 private fun isAccessibleTreeUri(
     contentResolver: ContentResolver,
     treeUri: Uri,
@@ -403,12 +406,8 @@ private fun scanAndroidFolder(
                     if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
                         scanDocument(childDocumentId, childPath)
                     } else {
-                        if (name.isBlank() || isTrashedDocumentName(name)) {
-                            continue
-                        }
                         val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childDocumentId)
-                        if (isTrashedDocument(contentResolver, documentUri)) {
-                            debugLog("SimpleLectorScan", "Se omitio archivo eliminado: $childPath")
+                        if (name.isBlank()) {
                             continue
                         }
                         buildBookFromPath(
@@ -440,10 +439,14 @@ private fun scanAndroidFolder(
                                 childPath = childPath,
                                 book = book,
                                 sizeBytes = size,
-                            )
+                            ).also { result ->
+                                if (result.hadError) {
+                                    hadErrors = true
+                                }
+                            }.book
                             scannedBook?.let {
-                                books += scannedBook
-                                refreshedCacheEntries += scannedBook.toScanCacheEntry(
+                                books += it
+                                refreshedCacheEntries += it.toScanCacheEntry(
                                     sizeBytes = size,
                                     lastModifiedMillis = lastModifiedMillis,
                                 )
@@ -484,7 +487,7 @@ private fun loadAndroidScannableBook(
     childPath: String,
     book: Book,
     sizeBytes: Long?,
-): Book? {
+): AndroidScannableBookResult {
     return runCatching {
         when (book.format.lowercase()) {
             "pdf" -> {
@@ -492,48 +495,70 @@ private fun loadAndroidScannableBook(
                     PdfRenderer(descriptor).use { renderer ->
                         renderer.pageCount
                     }
-                } ?: return null
-                if (pageCount <= 0) return null
-                book.withMetadata(totalPages = pageCount, hasRealPageCount = true)
+                } ?: return AndroidScannableBookResult(book = null, hadError = true)
+                if (pageCount <= 0) return AndroidScannableBookResult(book = null, hadError = true)
+                AndroidScannableBookResult(
+                    book = book.withMetadata(totalPages = pageCount, hasRealPageCount = true),
+                    hadError = false,
+                )
             }
             "txt", "md", "markdown" -> {
-                if (sizeBytes == 0L) return null
-                book
+                if (sizeBytes == 0L) {
+                    AndroidScannableBookResult(book = null, hadError = true)
+                } else {
+                    AndroidScannableBookResult(book = book, hadError = false)
+                }
             }
             "epub" -> {
-                val epub = inspectAndroidEpub(contentResolver, cacheDir, documentUri) ?: return null
-                if (epub.sections.isEmpty()) return null
-                book.withMetadata(title = epub.title, author = epub.author)
+                val epub = inspectAndroidEpub(contentResolver, cacheDir, documentUri)
+                    ?: return AndroidScannableBookResult(book = null, hadError = true)
+                if (epub.sections.isEmpty()) return AndroidScannableBookResult(book = null, hadError = true)
+                AndroidScannableBookResult(
+                    book = book.withMetadata(title = epub.title, author = epub.author),
+                    hadError = false,
+                )
             }
             "cbz" -> {
-                val cbz = inspectAndroidCbz(contentResolver, documentUri) ?: return null
-                if (cbz.pageCount <= 0) return null
-                book.withMetadata(
-                    title = cbz.title,
-                    author = cbz.author,
-                    totalPages = cbz.pageCount,
-                    hasRealPageCount = true,
+                val cbz = inspectAndroidCbz(contentResolver, documentUri)
+                    ?: return AndroidScannableBookResult(book = null, hadError = true)
+                if (cbz.pageCount <= 0) return AndroidScannableBookResult(book = null, hadError = true)
+                AndroidScannableBookResult(
+                    book = book.withMetadata(
+                        title = cbz.title,
+                        author = cbz.author,
+                        totalPages = cbz.pageCount,
+                        hasRealPageCount = true,
+                    ),
+                    hadError = false,
                 )
             }
             "cbr" -> {
-                val cbr = runCatching { inspectAndroidCbr(contentResolver, cacheDir, documentUri) }
+                val cbr = runCatching { inspectAndroidCbr(contentResolver, cacheDir, documentUri, book.signature) }
                     .getOrElse { error ->
-                        if (error.isUnsupportedRar5Error()) return book
+                        if (error.isUnsupportedRar5Error()) {
+                            debugLog("SimpleLectorScan", "Se omitio CBR no compatible $childPath: ${error.message}")
+                            return AndroidScannableBookResult(book = null, hadError = true)
+                        }
                         throw error
-                    } ?: return null
-                if (cbr.pageCount <= 0) return null
-                book.withMetadata(
-                    title = cbr.title,
-                    author = cbr.author,
-                    totalPages = cbr.pageCount,
-                    hasRealPageCount = true,
+                    } ?: return AndroidScannableBookResult(book = null, hadError = true)
+                if (cbr.pageCount <= 0) return AndroidScannableBookResult(book = null, hadError = true)
+                AndroidScannableBookResult(
+                    book = book.withMetadata(
+                        title = cbr.title,
+                        author = cbr.author,
+                        totalPages = cbr.pageCount,
+                        hasRealPageCount = true,
+                    ),
+                    hadError = false,
                 )
             }
-            else -> null
+            else -> AndroidScannableBookResult(book = null, hadError = false)
         }
     }.onFailure { error ->
         debugLog("SimpleLectorScan", "Se omitio archivo ilegible $childPath: ${error.message}")
-    }.getOrNull()
+    }.getOrElse {
+        AndroidScannableBookResult(book = null, hadError = true)
+    }
 }
 
 private fun renderPdfCover(
@@ -564,26 +589,6 @@ private fun renderPdfCover(
             }
         }
     }
-}
-
-private fun isTrashedDocument(
-    contentResolver: ContentResolver,
-    uri: Uri,
-): Boolean {
-    val projection = arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-    return runCatching {
-        contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-            if (!cursor.moveToFirst()) return@use false
-            val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-            if (nameIndex < 0) return@use false
-            isTrashedDocumentName(cursor.getString(nameIndex).orEmpty())
-        } ?: false
-    }.getOrDefault(false)
-}
-
-private fun isTrashedDocumentName(name: String): Boolean {
-    val normalized = name.trim().lowercase()
-    return normalized.startsWith(".trashed")
 }
 
 private fun extractCbzCover(bytes: ByteArray): ByteArray? {
@@ -703,11 +708,12 @@ private fun inspectAndroidCbr(
     contentResolver: ContentResolver,
     cacheDir: File,
     uri: Uri,
+    sourceVersionKey: String,
 ): AndroidCbzScanResult? {
     var comicInfoXml: String? = null
     var pageCount = 0
 
-    withTempAndroidCbrArchive(contentResolver, cacheDir, uri) { archive ->
+    withTempAndroidCbrArchive(contentResolver, cacheDir, uri, sourceVersionKey) { archive ->
             archive.fileHeaders.forEach { header ->
                 if (header.isDirectory) return@forEach
                 val entryPath = normalizeAndroidCbzPath(header.fileName.orEmpty())
@@ -736,9 +742,10 @@ private fun canOpenAndroidCbr(
     contentResolver: ContentResolver,
     cacheDir: File,
     uri: Uri,
+    sourceVersionKey: String,
 ): Boolean =
     try {
-        withTempAndroidCbrArchive(contentResolver, cacheDir, uri) { archive ->
+        withTempAndroidCbrArchive(contentResolver, cacheDir, uri, sourceVersionKey) { archive ->
                 archive.fileHeaders.firstOrNull { !it.isDirectory && normalizeAndroidCbzPath(it.fileName.orEmpty()).isSupportedAndroidCbzImage() } != null
         } ?: false
     } catch (_: UnsupportedRarV5Exception) {
@@ -812,11 +819,12 @@ private fun extractAndroidCbrCover(
     contentResolver: ContentResolver,
     cacheDir: File,
     uri: Uri,
+    sourceVersionKey: String,
 ): ByteArray? {
     var comicInfoXml: String? = null
     val imageEntries = mutableListOf<Pair<String, FileHeader>>()
 
-    val selectedPath = withTempAndroidCbrArchive(contentResolver, cacheDir, uri) { archive ->
+    val selectedPath = withTempAndroidCbrArchive(contentResolver, cacheDir, uri, sourceVersionKey) { archive ->
             archive.fileHeaders.forEach { header ->
                 if (header.isDirectory) return@forEach
                 val entryPath = normalizeAndroidCbzPath(header.fileName.orEmpty())
@@ -838,7 +846,7 @@ private fun extractAndroidCbrCover(
                 ?.first
     } ?: return null
 
-    return withTempAndroidCbrArchive(contentResolver, cacheDir, uri) { archive ->
+    return withTempAndroidCbrArchive(contentResolver, cacheDir, uri, sourceVersionKey) { archive ->
         val selectedHeader = archive.fileHeaders.firstOrNull { header ->
             !header.isDirectory && normalizeAndroidCbzPath(header.fileName.orEmpty()) == selectedPath
         } ?: return@withTempAndroidCbrArchive null
@@ -901,6 +909,14 @@ private fun spillZipEntryToTempFile(
 }
 
 private fun File.downscaleAndroidCbzImageFile(maxDimension: Int): ByteArray? {
+    AndroidNativeImageBridge.decodeScaledBitmapFile(this, maxDimension)?.let { bitmap ->
+        return bitmap.useCompressedCbzBytes()
+    }
+    debugLog(
+        NativeImageLogTag,
+        "Falling back to BitmapFactory for cover/thumbnail ${name} (maxDimension=$maxDimension)",
+    )
+
     val bounds = BitmapFactory.Options().apply {
         inJustDecodeBounds = true
     }

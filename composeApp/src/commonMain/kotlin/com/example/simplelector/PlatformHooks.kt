@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 @Composable
 expect fun PlatformDocumentPage(
     sourceId: String,
+    sourceVersionKey: String,
     format: String,
     pageNumber: Int,
     theme: ReaderTheme,

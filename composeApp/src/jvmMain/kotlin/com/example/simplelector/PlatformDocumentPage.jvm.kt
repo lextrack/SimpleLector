@@ -86,6 +86,7 @@ private object DesktopVisualPageCache {
 @Suppress("UNUSED_PARAMETER")
 actual fun PlatformDocumentPage(
     sourceId: String,
+    sourceVersionKey: String,
     format: String,
     pageNumber: Int,
     theme: ReaderTheme,
