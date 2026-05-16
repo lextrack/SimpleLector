@@ -201,3 +201,7 @@ node_modules/
 /androidApp/release/androidApp-release/BUNDLE-METADATA/com.android.tools.build.debugsymbols/armeabi-v7a/libsimplelector_native.so.sym
 /androidApp/release/androidApp-release/BUNDLE-METADATA/com.android.tools.build.debugsymbols/x86/libsimplelector_native.so.sym
 /androidApp/release/androidApp-release/BUNDLE-METADATA/com.android.tools.build.debugsymbols/x86_64/libsimplelector_native.so.sym
+/androidApp/release/androidApp-release.apk
+/androidApp/release/baselineProfiles/0/androidApp-release.dm
+/androidApp/release/baselineProfiles/1/androidApp-release.dm
+/androidApp/release/output-metadata.json
