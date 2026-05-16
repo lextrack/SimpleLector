@@ -972,6 +972,15 @@ private fun BookRow(
                 Text(book.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(book.author ?: strings.unknownAuthor, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 FolderPathText(book.path, fontSize = 12.sp, theme = state.readerTheme)
+                book.fileSizeBytes?.let { fileSizeBytes ->
+                    Text(
+                        formatBookFileSize(fileSizeBytes),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(book.libraryProgressLabel(), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
@@ -1334,9 +1343,31 @@ private fun BookCarouselCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                book.fileSizeBytes?.let { fileSizeBytes ->
+                    Text(
+                        formatBookFileSize(fileSizeBytes),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
+}
+
+private fun formatBookFileSize(sizeBytes: Long): String {
+    if (sizeBytes < 1024L) return "$sizeBytes B"
+    val units = listOf("KB", "MB", "GB", "TB")
+    var value = sizeBytes.toDouble()
+    var unitIndex = -1
+    while (value >= 1024.0 && unitIndex < units.lastIndex) {
+        value /= 1024.0
+        unitIndex += 1
+    }
+    val decimals = if (value >= 100 || value % 1.0 == 0.0) 0 else 1
+    return "%.${decimals}f %s".format(value, units[unitIndex.coerceAtLeast(0)])
 }
 
 @Composable

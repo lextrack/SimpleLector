@@ -13,6 +13,7 @@ data class Book(
     val format: String,
     val path: String,
     val folder: String,
+    val fileSizeBytes: Long? = null,
     val totalPages: Int,
     val progressPage: Int = 1,
     val hasRealPageCount: Boolean = false,

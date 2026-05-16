@@ -27,6 +27,7 @@ fun encodeLibrarySnapshot(folders: List<ScannedFolder>): String =
                         escapeProgressField(book.sortKey),
                         escapeProgressField(book.format),
                         escapeProgressField(book.path),
+                        book.fileSizeBytes?.toString().orEmpty(),
                         book.totalPages.toString(),
                         book.progressPage.toString(),
                         if (book.hasRealPageCount) "1" else "0",
@@ -62,6 +63,10 @@ fun decodeLibrarySnapshot(raw: String): List<ScannedFolder> {
                     if (parts.size < 13) return@forEach
                     val folderPath = unescapeProgressField(parts[1])
                     val folderEntry = folderByPath[folderPath] ?: return@forEach
+                    val hasFileSizeField = parts.size >= 14
+                    val totalPagesIndex = if (hasFileSizeField) 11 else 10
+                    val progressPageIndex = if (hasFileSizeField) 12 else 11
+                    val hasRealPageCountIndex = if (hasFileSizeField) 13 else 12
                     folderEntry.third += Book(
                         id = unescapeProgressField(parts[2]),
                         signature = unescapeProgressField(parts[3]),
@@ -72,9 +77,10 @@ fun decodeLibrarySnapshot(raw: String): List<ScannedFolder> {
                         format = unescapeProgressField(parts[8]),
                         path = unescapeProgressField(parts[9]),
                         folder = folderPath,
-                        totalPages = parts[10].toIntOrNull()?.coerceAtLeast(1) ?: 1,
-                        progressPage = parts[11].toIntOrNull()?.coerceAtLeast(1) ?: 1,
-                        hasRealPageCount = parts[12] == "1",
+                        fileSizeBytes = if (hasFileSizeField) parts[10].toLongOrNull() else null,
+                        totalPages = parts[totalPagesIndex].toIntOrNull()?.coerceAtLeast(1) ?: 1,
+                        progressPage = parts[progressPageIndex].toIntOrNull()?.coerceAtLeast(1) ?: 1,
+                        hasRealPageCount = parts[hasRealPageCountIndex] == "1",
                     )
                 }
             }

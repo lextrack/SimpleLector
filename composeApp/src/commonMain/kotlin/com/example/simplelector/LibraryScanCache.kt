@@ -63,7 +63,9 @@ fun buildBookFromScanCache(
         sizeBytes = sizeBytes,
         lastModifiedMillis = lastModifiedMillis,
     ) ?: return null
-    return base.withMetadata(
+    return base.copy(
+        fileSizeBytes = sizeBytes,
+    ).withMetadata(
         title = cached.title,
         author = cached.author,
         totalPages = cached.totalPages,

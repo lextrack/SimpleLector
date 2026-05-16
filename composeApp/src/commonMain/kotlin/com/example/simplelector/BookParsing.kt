@@ -38,6 +38,7 @@ fun buildBookFromPath(
         format = extension,
         path = path,
         folder = folderPath,
+        fileSizeBytes = sizeBytes,
         totalPages = 1,
     )
 }
