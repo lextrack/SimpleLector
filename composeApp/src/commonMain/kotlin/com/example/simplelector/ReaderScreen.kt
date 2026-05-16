@@ -131,7 +131,6 @@ fun ReaderScreen(
         return
     }
     val readerDocument = state.readerDocuments[book.id]
-    val pageScrollState = rememberScrollState()
 
     LaunchedEffect(book.id, onLoadBook) {
         if (readerDocument == null && onLoadBook != null && state.loadingReaderBookId != book.id) {
@@ -170,7 +169,6 @@ fun ReaderScreen(
     var bookmarkFeedback by remember(activeBook.id) { mutableStateOf<String?>(null) }
     val allowFullTapNavigation = !isZoomableVisualBook || visualZoomLevel <= 1.01f
     LaunchedEffect(activeBook.progressPage) {
-        pageScrollState.scrollTo(0)
         jumpToPage = activeBook.progressPage.toString()
         readerFocusRequester.requestFocus()
     }
@@ -329,26 +327,10 @@ fun ReaderScreen(
                             onToggleHud = { state.readerHudVisible = !state.readerHudVisible },
                         )
                     },
-                ),
+            ),
             contentAlignment = if (useDesktopTextLayout) Alignment.TopCenter else Alignment.Center,
         ) {
-            AnimatedContent(
-                targetState = activeBook.progressPage,
-                transitionSpec = {
-                    val forward = targetState >= initialState
-                    val enter = slideInHorizontally(
-                        animationSpec = readerAnimationSpec(),
-                        initialOffsetX = { fullWidth -> if (forward) fullWidth / 5 else -fullWidth / 5 },
-                    ) + fadeIn(animationSpec = readerAnimationSpec())
-                    val exit = slideOutHorizontally(
-                        animationSpec = readerAnimationSpec(),
-                        targetOffsetX = { fullWidth -> if (forward) -fullWidth / 6 else fullWidth / 6 },
-                    ) + fadeOut(animationSpec = readerAnimationSpec())
-                    enter.togetherWith(exit)
-                },
-                contentAlignment = if (useDesktopTextLayout) Alignment.TopCenter else Alignment.Center,
-                label = "readerPageTransition",
-            ) { pageNumber ->
+            val pageContentSlot: @Composable (Int) -> Unit = { pageNumber ->
                 val pageContent = readerDocument?.pages?.getOrNull((pageNumber - 1).coerceAtLeast(0))
                 val platformRendered = PlatformDocumentPage(
                     sourceId = activeBook.id,
@@ -390,6 +372,7 @@ fun ReaderScreen(
                                 .padding(vertical = 8.dp),
                         )
                     } else {
+                        val pageScrollState = rememberScrollState()
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -424,6 +407,24 @@ fun ReaderScreen(
                     }
                 }
             }
+            AnimatedContent(
+                targetState = activeBook.progressPage,
+                transitionSpec = {
+                    val forward = targetState >= initialState
+                    val enter = slideInHorizontally(
+                        animationSpec = readerAnimationSpec(),
+                        initialOffsetX = { fullWidth -> if (forward) fullWidth / 5 else -fullWidth / 5 },
+                    ) + fadeIn(animationSpec = readerAnimationSpec())
+                    val exit = slideOutHorizontally(
+                        animationSpec = readerAnimationSpec(),
+                        targetOffsetX = { fullWidth -> if (forward) -fullWidth / 6 else fullWidth / 6 },
+                    ) + fadeOut(animationSpec = readerAnimationSpec())
+                    enter.togetherWith(exit)
+                },
+                contentAlignment = if (useDesktopTextLayout) Alignment.TopCenter else Alignment.Center,
+                label = "readerPageTransition",
+                content = { pageNumber -> pageContentSlot(pageNumber) },
+            )
         }
 
         AnimatedVisibility(
