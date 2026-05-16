@@ -11,6 +11,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -39,10 +40,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -90,12 +93,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.random.Random
 
 private fun carouselCardWidth(): Dp = if (isDesktopPlatform()) 204.dp else 184.dp
 
 private fun carouselCoverHeight(): Dp = if (isDesktopPlatform()) 252.dp else 228.dp
 
 private fun folderCarouselIconSize(): Dp = if (isDesktopPlatform()) 96.dp else 88.dp
+
+private const val RandomAnimationStepDelayMillis = 150L
+private const val RandomAnimationFinalDelayMillis = 220L
+
+private data class RandomReadRequest(
+    val id: Int,
+    val bookId: String,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -106,6 +118,12 @@ fun LibraryScreen(
     onLoadCover: (suspend (Book) -> ByteArray?)?,
 ) {
     val strings = rememberAppStrings()
+    val visibleRandomBooks = when (state.libraryViewMode) {
+        LibraryViewMode.Books -> state.filteredBooks
+        LibraryViewMode.Folders -> state.libraryFolderView.books
+    }
+    var randomReadRequest by remember { mutableStateOf<RandomReadRequest?>(null) }
+    var randomAnimationInProgress by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -141,6 +159,22 @@ fun LibraryScreen(
                         isRefreshing = state.isRefreshing,
                         onClick = { onRefreshLibrary?.invoke() },
                     )
+                    IconButton(
+                        enabled = visibleRandomBooks.isNotEmpty() && !randomAnimationInProgress,
+                        onClick = {
+                            val targetBook = visibleRandomBooks.random(Random(System.currentTimeMillis()))
+                            randomAnimationInProgress = true
+                            randomReadRequest = RandomReadRequest(
+                                id = randomReadRequest?.id?.plus(1) ?: 1,
+                                bookId = targetBook.id,
+                            )
+                        },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Shuffle,
+                            contentDescription = strings.randomBook,
+                        )
+                    }
                 }
                 if (state.isRefreshing) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -172,12 +206,44 @@ fun LibraryScreen(
             } else {
                 when (state.libraryViewMode) {
                     LibraryViewMode.Books -> when (state.libraryPresentationMode) {
-                        LibraryPresentationMode.List -> BookList(state, onLoadCover)
-                        LibraryPresentationMode.Carousel -> BookCarousel(state, onLoadCover)
+                        LibraryPresentationMode.List -> BookList(
+                            state = state,
+                            onLoadCover = onLoadCover,
+                            randomReadRequest = randomReadRequest,
+                            onRandomReadFinished = {
+                                randomAnimationInProgress = false
+                                randomReadRequest = null
+                            },
+                        )
+                        LibraryPresentationMode.Carousel -> BookCarousel(
+                            state = state,
+                            onLoadCover = onLoadCover,
+                            randomReadRequest = randomReadRequest,
+                            onRandomReadFinished = {
+                                randomAnimationInProgress = false
+                                randomReadRequest = null
+                            },
+                        )
                     }
                     LibraryViewMode.Folders -> when (state.libraryPresentationMode) {
-                        LibraryPresentationMode.List -> FolderBrowser(state, onLoadCover)
-                        LibraryPresentationMode.Carousel -> FolderBrowserCarousel(state, onLoadCover)
+                        LibraryPresentationMode.List -> FolderBrowser(
+                            state = state,
+                            onLoadCover = onLoadCover,
+                            randomReadRequest = randomReadRequest,
+                            onRandomReadFinished = {
+                                randomAnimationInProgress = false
+                                randomReadRequest = null
+                            },
+                        )
+                        LibraryPresentationMode.Carousel -> FolderBrowserCarousel(
+                            state = state,
+                            onLoadCover = onLoadCover,
+                            randomReadRequest = randomReadRequest,
+                            onRandomReadFinished = {
+                                randomAnimationInProgress = false
+                                randomReadRequest = null
+                            },
+                        )
                     }
                 }
             }
@@ -279,10 +345,40 @@ private fun libraryBackgroundBrush(theme: ReaderTheme): Brush = when (theme) {
 }
 
 @Composable
-private fun BookList(state: SimpleLectorState, onLoadCover: (suspend (Book) -> ByteArray?)?) {
+private fun BookList(
+    state: SimpleLectorState,
+    onLoadCover: (suspend (Book) -> ByteArray?)?,
+    randomReadRequest: RandomReadRequest?,
+    onRandomReadFinished: () -> Unit,
+) {
     val searchToken = state.search.trim().lowercase()
     val animatedKeys = remember(state.libraryAnimationCycle, searchToken) { mutableSetOf<String>() }
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val listState = rememberLazyListState()
+    var highlightedBookId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(randomReadRequest?.id, state.filteredBooks) {
+        val request = randomReadRequest ?: return@LaunchedEffect
+        val targetIndex = state.filteredBooks.indexOfFirst { it.id == request.bookId }
+        if (targetIndex < 0) return@LaunchedEffect
+        animateListRandomSelection(
+            listState = listState,
+            itemCount = state.filteredBooks.size,
+            targetIndex = targetIndex,
+            currentIndex = listState.firstVisibleItemIndex,
+            seed = request.id,
+            onVisitedIndex = { visitedIndex ->
+                highlightedBookId = state.filteredBooks.getOrNull(visitedIndex)?.id
+            },
+        )
+        highlightedBookId = request.bookId
+        delay(280)
+        state.openBook(state.filteredBooks[targetIndex])
+        highlightedBookId = null
+        onRandomReadFinished()
+    }
+    LazyColumn(
+        state = listState,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         itemsIndexed(state.filteredBooks, key = { _, it -> it.id }) { index, book ->
             val animationKey = "book:$searchToken:${book.id}"
             BookRow(
@@ -294,6 +390,7 @@ private fun BookList(state: SimpleLectorState, onLoadCover: (suspend (Book) -> B
                 coverBytes = state.bookCovers[book.id],
                 onLoadCover = onLoadCover,
                 onCoverLoaded = { bytes -> state.setLoadedCover(book.id, bytes) },
+                isHighlighted = highlightedBookId == book.id,
                 onOpen = { state.openBook(book) },
             )
         }
@@ -301,7 +398,12 @@ private fun BookList(state: SimpleLectorState, onLoadCover: (suspend (Book) -> B
 }
 
 @Composable
-private fun BookCarousel(state: SimpleLectorState, onLoadCover: (suspend (Book) -> ByteArray?)?) {
+private fun BookCarousel(
+    state: SimpleLectorState,
+    onLoadCover: (suspend (Book) -> ByteArray?)?,
+    randomReadRequest: RandomReadRequest?,
+    onRandomReadFinished: () -> Unit,
+) {
     val carouselKey = libraryBooksCarouselKey(state)
     Box(
         modifier = Modifier
@@ -318,6 +420,14 @@ private fun BookCarousel(state: SimpleLectorState, onLoadCover: (suspend (Book) 
             initialSelectedIndex = state.carouselSelectionIndex(carouselKey),
             onSelectedIndexChange = { state.setCarouselSelectionIndex(carouselKey, it) },
             itemCount = state.filteredBooks.size,
+            animationRequest = randomReadRequest?.let { request ->
+                val targetIndex = state.filteredBooks.indexOfFirst { it.id == request.bookId }
+                if (targetIndex >= 0) CarouselAnimationRequest(id = request.id, targetIndex = targetIndex) else null
+            },
+            onAnimationRequestHandled = { request ->
+                state.filteredBooks.getOrNull(request.targetIndex)?.let(state::openBook)
+                onRandomReadFinished()
+            },
         ) { index, emphasis, isSelected, onActivate ->
             val book = state.filteredBooks[index]
             BookCarouselCard(
@@ -337,13 +447,19 @@ private fun BookCarousel(state: SimpleLectorState, onLoadCover: (suspend (Book) 
 }
 
 @Composable
-private fun FolderBrowser(state: SimpleLectorState, onLoadCover: (suspend (Book) -> ByteArray?)?) {
+private fun FolderBrowser(
+    state: SimpleLectorState,
+    onLoadCover: (suspend (Book) -> ByteArray?)?,
+    randomReadRequest: RandomReadRequest?,
+    onRandomReadFinished: () -> Unit,
+) {
     val strings = rememberAppStrings()
     val folderView = state.libraryFolderView
     val searchToken = state.search.trim().lowercase()
     val animatedKeys = remember(state.libraryAnimationCycle, folderView.currentPath, searchToken) { mutableSetOf<String>() }
     val listKey = libraryFolderListKey(state, folderView, LibraryPresentationMode.List)
     val savedPosition = state.libraryListPosition(listKey)
+    var highlightedBookId by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = savedPosition?.firstVisibleItemIndex ?: 0,
         initialFirstVisibleItemScrollOffset = savedPosition?.firstVisibleItemScrollOffset ?: 0,
@@ -363,6 +479,28 @@ private fun FolderBrowser(state: SimpleLectorState, onLoadCover: (suspend (Book)
                     firstVisibleItemScrollOffset = position.firstVisibleItemScrollOffset,
                 )
             }
+    }
+    LaunchedEffect(randomReadRequest?.id, folderView.books) {
+        val request = randomReadRequest ?: return@LaunchedEffect
+        val targetIndex = folderView.books.indexOfFirst { it.id == request.bookId }
+        if (targetIndex < 0) return@LaunchedEffect
+        val absoluteTargetIndex = targetIndex + folderView.childFolders.size + 1
+        animateListRandomSelection(
+            listState = listState,
+            itemCount = folderView.childFolders.size + folderView.books.size + 1,
+            targetIndex = absoluteTargetIndex,
+            currentIndex = listState.firstVisibleItemIndex,
+            seed = request.id,
+            onVisitedIndex = { visitedIndex ->
+                val bookStartIndex = folderView.childFolders.size + 1
+                highlightedBookId = folderView.books.getOrNull(visitedIndex - bookStartIndex)?.id
+            },
+        )
+        highlightedBookId = request.bookId
+        delay(280)
+        state.openBook(folderView.books[targetIndex])
+        highlightedBookId = null
+        onRandomReadFinished()
     }
     LazyColumn(
         state = listState,
@@ -398,6 +536,7 @@ private fun FolderBrowser(state: SimpleLectorState, onLoadCover: (suspend (Book)
                 coverBytes = state.bookCovers[book.id],
                 onLoadCover = onLoadCover,
                 onCoverLoaded = { bytes -> state.setLoadedCover(book.id, bytes) },
+                isHighlighted = highlightedBookId == book.id,
                 onOpen = { state.openBook(book) },
             )
         }
@@ -410,7 +549,12 @@ private fun FolderBrowser(state: SimpleLectorState, onLoadCover: (suspend (Book)
 }
 
 @Composable
-private fun FolderBrowserCarousel(state: SimpleLectorState, onLoadCover: (suspend (Book) -> ByteArray?)?) {
+private fun FolderBrowserCarousel(
+    state: SimpleLectorState,
+    onLoadCover: (suspend (Book) -> ByteArray?)?,
+    randomReadRequest: RandomReadRequest?,
+    onRandomReadFinished: () -> Unit,
+) {
     val strings = rememberAppStrings()
     val folderView = state.libraryFolderView
     val folderCarouselKey = libraryFoldersCarouselKey(state, folderView)
@@ -437,6 +581,14 @@ private fun FolderBrowserCarousel(state: SimpleLectorState, onLoadCover: (suspen
                     firstVisibleItemScrollOffset = position.firstVisibleItemScrollOffset,
                 )
             }
+    }
+    LaunchedEffect(randomReadRequest?.id, folderView.childFolders.size, folderView.books.size) {
+        val request = randomReadRequest ?: return@LaunchedEffect
+        if (folderView.books.none { it.id == request.bookId }) return@LaunchedEffect
+        val booksSectionIndex = if (folderView.childFolders.isNotEmpty()) 2 else 1
+        if (listState.firstVisibleItemIndex < booksSectionIndex) {
+            listState.animateScrollToItem(booksSectionIndex)
+        }
     }
     LazyColumn(
         state = listState,
@@ -505,6 +657,14 @@ private fun FolderBrowserCarousel(state: SimpleLectorState, onLoadCover: (suspen
                         initialSelectedIndex = state.carouselSelectionIndex(bookCarouselKey),
                         onSelectedIndexChange = { state.setCarouselSelectionIndex(bookCarouselKey, it) },
                         itemCount = folderView.books.size,
+                        animationRequest = randomReadRequest?.let { request ->
+                            val targetIndex = folderView.books.indexOfFirst { it.id == request.bookId }
+                            if (targetIndex >= 0) CarouselAnimationRequest(id = request.id, targetIndex = targetIndex) else null
+                        },
+                        onAnimationRequestHandled = { request ->
+                            folderView.books.getOrNull(request.targetIndex)?.let(state::openBook)
+                            onRandomReadFinished()
+                        },
                     ) { index, emphasis, isSelected, onActivate ->
                         val book = folderView.books[index]
                         BookCarouselCard(
@@ -777,9 +937,19 @@ private fun BookRow(
     coverBytes: ByteArray?,
     onLoadCover: (suspend (Book) -> ByteArray?)?,
     onCoverLoaded: (ByteArray) -> Unit,
+    isHighlighted: Boolean = false,
     onOpen: () -> Unit,
 ) {
     val strings = rememberAppStrings()
+    val containerColor by animateColorAsState(
+        targetValue = if (isHighlighted) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        },
+        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+        label = "bookRowHighlight",
+    )
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -789,7 +959,7 @@ private fun BookRow(
                 animateOnFirstAppearance = animateOnFirstAppearance,
             )
             .clickable(onClick = onOpen),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
         shape = RoundedCornerShape(8.dp),
     ) {
         Row(
@@ -847,12 +1017,19 @@ private fun libraryFolderListKey(
     presentationMode: LibraryPresentationMode,
 ): String = "folderList:${presentationMode.name}:${folderView.currentPath ?: "root"}:${state.search.trim().lowercase()}"
 
+private data class CarouselAnimationRequest(
+    val id: Int,
+    val targetIndex: Int,
+)
+
 @Composable
 private fun HorizontalCarousel(
     carouselKey: String,
     initialSelectedIndex: Int,
     onSelectedIndexChange: (Int) -> Unit,
     itemCount: Int,
+    animationRequest: CarouselAnimationRequest? = null,
+    onAnimationRequestHandled: ((CarouselAnimationRequest) -> Unit)? = null,
     itemContent: @Composable (index: Int, emphasis: Float, isSelected: Boolean, onActivate: ((() -> Unit) -> () -> Unit)) -> Unit,
 ) {
     val scrollState = rememberScrollState()
@@ -918,6 +1095,18 @@ private fun HorizontalCarousel(
                 centerOnIndex(nearestIndex, animate = true)
             }
         }
+        LaunchedEffect(animationRequest?.id, hasRestoredPosition, itemCount) {
+            val request = animationRequest ?: return@LaunchedEffect
+            if (!hasRestoredPosition || itemCount <= 0) return@LaunchedEffect
+            animateCarouselRandomSelection(
+                itemCount = itemCount,
+                targetIndex = request.targetIndex,
+                currentIndex = nearestIndexForCurrentScroll(),
+                seed = request.id,
+                centerOnIndex = { index, animate -> centerOnIndex(index, animate) },
+            )
+            onAnimationRequestHandled?.invoke(request)
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -978,6 +1167,91 @@ private fun HorizontalCarousel(
             }
         }
     }
+}
+
+private suspend fun animateListRandomSelection(
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    itemCount: Int,
+    targetIndex: Int,
+    currentIndex: Int,
+    seed: Int,
+    onVisitedIndex: (Int) -> Unit = {},
+) {
+    if (itemCount <= 0) return
+    val safeTarget = targetIndex.coerceIn(0, itemCount - 1)
+    val safeCurrent = currentIndex.coerceIn(0, itemCount - 1)
+    val stops = buildRandomAnimationStops(
+        itemCount = itemCount,
+        targetIndex = safeTarget,
+        currentIndex = safeCurrent,
+        seed = seed,
+    )
+    stops.forEachIndexed { index, stop ->
+        onVisitedIndex(stop)
+        listState.animateScrollToItem(stop)
+        if (index < stops.lastIndex) {
+            delay(RandomAnimationStepDelayMillis)
+        }
+    }
+    delay(RandomAnimationFinalDelayMillis)
+}
+
+private suspend fun animateCarouselRandomSelection(
+    itemCount: Int,
+    targetIndex: Int,
+    currentIndex: Int,
+    seed: Int,
+    centerOnIndex: suspend (index: Int, animate: Boolean) -> Unit,
+) {
+    if (itemCount <= 0) return
+    val safeTarget = targetIndex.coerceIn(0, itemCount - 1)
+    val safeCurrent = currentIndex.coerceIn(0, itemCount - 1)
+    val stops = buildRandomAnimationStops(
+        itemCount = itemCount,
+        targetIndex = safeTarget,
+        currentIndex = safeCurrent,
+        seed = seed,
+    )
+    stops.forEachIndexed { index, stop ->
+        centerOnIndex(stop, true)
+        if (index < stops.lastIndex) {
+            delay(RandomAnimationStepDelayMillis)
+        }
+    }
+    delay(RandomAnimationFinalDelayMillis)
+}
+
+private fun buildRandomAnimationStops(
+    itemCount: Int,
+    targetIndex: Int,
+    currentIndex: Int,
+    seed: Int,
+): List<Int> {
+    if (itemCount <= 1) return listOf(targetIndex.coerceAtLeast(0))
+    val safeTarget = targetIndex.coerceIn(0, itemCount - 1)
+    val safeCurrent = currentIndex.coerceIn(0, itemCount - 1)
+    val random = Random(seed)
+    val distance = abs(safeTarget - safeCurrent)
+    val extraStopCount = when {
+        itemCount <= 3 -> 0
+        distance <= 3 -> 1
+        else -> 1
+    }
+    val randomStops = mutableListOf<Int>()
+    repeat(extraStopCount) {
+        var candidate: Int
+        do {
+            candidate = random.nextInt(itemCount)
+        } while (candidate == safeTarget || candidate == safeCurrent || candidate in randomStops)
+        randomStops += candidate
+    }
+    return buildList {
+        if (safeCurrent != safeTarget) {
+            add(safeCurrent)
+        }
+        addAll(randomStops)
+        add(safeTarget)
+    }.distinct()
 }
 
 @Composable
