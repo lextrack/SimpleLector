@@ -329,7 +329,7 @@ actual fun PlatformReaderWindowEffect(
     val activity = view.context as? android.app.Activity ?: return
     val window = activity.window
 
-    DisposableEffect(fullscreen, keepScreenOn, lockRotation) {
+    DisposableEffect(fullscreen) {
         WindowCompat.setDecorFitsSystemWindows(window, !fullscreen)
         if (fullscreen) {
             window.insetsController?.apply {
@@ -339,11 +339,25 @@ actual fun PlatformReaderWindowEffect(
         } else {
             window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
         }
+        onDispose {
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+        }
+    }
+
+    DisposableEffect(keepScreenOn) {
         if (keepScreenOn) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
+
+        onDispose {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    DisposableEffect(lockRotation) {
         activity.requestedOrientation = if (lockRotation) {
             ActivityInfo.SCREEN_ORIENTATION_LOCKED
         } else {
@@ -351,9 +365,6 @@ actual fun PlatformReaderWindowEffect(
         }
 
         onDispose {
-            WindowCompat.setDecorFitsSystemWindows(window, true)
-            window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
