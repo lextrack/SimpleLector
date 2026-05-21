@@ -3,7 +3,6 @@ package com.example.simplelector
 import android.content.ContentResolver
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.provider.DocumentsContract
@@ -12,7 +11,6 @@ import com.github.junrar.rarfile.FileHeader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileNotFoundException
 import java.security.MessageDigest
@@ -935,50 +933,11 @@ private fun spillZipEntryToTempFile(
 }
 
 private fun File.downscaleAndroidCbzImageFile(maxDimension: Int): ByteArray? {
-    AndroidNativeImageBridge.decodeScaledBitmapFile(this, maxDimension)?.let { bitmap ->
-        return bitmap.useCompressedCbzBytes()
-    }
-    debugLog(
-        NativeImageLogTag,
-        "Falling back to BitmapFactory for cover/thumbnail ${name} (maxDimension=$maxDimension)",
+    return AndroidImagePipeline.createThumbnailBytesFromFile(
+        file = this,
+        maxDimension = maxDimension,
+        quality = CbzCompressedImageQuality,
     )
-
-    val bounds = BitmapFactory.Options().apply {
-        inJustDecodeBounds = true
-    }
-    BitmapFactory.decodeFile(absolutePath, bounds)
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-    val options = BitmapFactory.Options().apply {
-        inSampleSize = calculateAndroidInSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
-        inPreferredConfig = Bitmap.Config.RGB_565
-    }
-    val bitmap = BitmapFactory.decodeFile(absolutePath, options) ?: return null
-    return bitmap.useCompressedCbzBytes()
-}
-
-private fun Bitmap.useCompressedCbzBytes(): ByteArray {
-    return ByteArrayOutputStream().use { out ->
-        compress(Bitmap.CompressFormat.WEBP_LOSSY, CbzCompressedImageQuality, out)
-        recycle()
-        out.toByteArray()
-    }
-}
-
-private fun calculateAndroidInSampleSize(
-    width: Int,
-    height: Int,
-    maxDimension: Int,
-): Int {
-    var sampleSize = 1
-    var scaledWidth = width
-    var scaledHeight = height
-    while (scaledWidth > maxDimension || scaledHeight > maxDimension) {
-        sampleSize *= 2
-        scaledWidth = width / sampleSize
-        scaledHeight = height / sampleSize
-    }
-    return sampleSize.coerceAtLeast(1)
 }
 
 private fun normalizeAndroidCbzPath(path: String): String =

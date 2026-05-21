@@ -5,6 +5,10 @@ import java.io.File
 
 internal object AndroidNativeImageBridge {
     private const val NativeImageLogTag = "SimpleLectorNative"
+    private const val ScaleModeFit = 0
+    private const val ScaleModeCenterCrop = 1
+    private const val ColorConfigArgb8888 = 0
+    private const val ColorConfigRgb565 = 1
     private var loadAttempted = false
     private var available = false
 
@@ -31,42 +35,109 @@ internal object AndroidNativeImageBridge {
 
     fun isAvailable(): Boolean = ensureLoaded()
 
-    fun decodeScaledBitmapFile(
+    fun decodeBitmapFile(
         file: File,
-        maxDimension: Int,
+        request: AndroidBitmapRequest,
     ): Bitmap? {
-        if (maxDimension <= 0 || !ensureLoaded()) return null
+        if (request.maxWidth <= 0 || request.maxHeight <= 0 || !ensureLoaded()) return null
         val encodedBytes = runCatching { file.readBytes() }.getOrNull() ?: return null
-        return decodeScaledBitmapBytes(
+        return decodeBitmapBytes(
             encodedBytes = encodedBytes,
-            maxDimension = maxDimension,
-            sourceLabel = file.name,
+            request = request.copy(sourceLabel = file.name),
         )
     }
 
-    fun decodeScaledBitmapBytes(
+    fun decodeBitmapBytes(
         encodedBytes: ByteArray,
-        maxDimension: Int,
-        sourceLabel: String,
+        request: AndroidBitmapRequest,
     ): Bitmap? {
-        if (maxDimension <= 0 || encodedBytes.isEmpty() || !ensureLoaded()) return null
-        val bitmap = nativeDecodeScaledBitmap(encodedBytes, maxDimension)
+        if (request.maxWidth <= 0 || request.maxHeight <= 0 || encodedBytes.isEmpty() || !ensureLoaded()) return null
+        val bitmap = nativeDecodeBitmap(
+            encodedBytes = encodedBytes,
+            maxWidth = request.maxWidth,
+            maxHeight = request.maxHeight,
+            scaleMode = request.scaleMode.toNativeValue(),
+            colorConfig = request.colorConfig.toNativeValue(),
+        )
         if (bitmap != null) {
             debugLog(
                 NativeImageLogTag,
-                "Native decode OK for $sourceLabel (maxDimension=$maxDimension, ${bitmap.width}x${bitmap.height})",
+                "Native decode OK for ${request.sourceLabel} (${request.maxWidth}x${request.maxHeight}, mode=${request.scaleMode}, config=${request.colorConfig}, ${bitmap.width}x${bitmap.height})",
             )
         } else {
             debugLog(
                 NativeImageLogTag,
-                "Native decode returned null for $sourceLabel (maxDimension=$maxDimension)",
+                "Native decode returned null for ${request.sourceLabel} (${request.maxWidth}x${request.maxHeight}, mode=${request.scaleMode}, config=${request.colorConfig})",
             )
         }
         return bitmap
     }
 
-    private external fun nativeDecodeScaledBitmap(
+    fun decodeAndCompressFile(
+        file: File,
+        request: AndroidCompressedImageRequest,
+    ): ByteArray? {
+        if (request.maxWidth <= 0 || request.maxHeight <= 0 || request.quality !in 1..100 || !ensureLoaded()) return null
+        val encodedBytes = runCatching { file.readBytes() }.getOrNull() ?: return null
+        return decodeAndCompressBytes(
+            encodedBytes = encodedBytes,
+            request = request.copy(sourceLabel = file.name),
+        )
+    }
+
+    fun decodeAndCompressBytes(
         encodedBytes: ByteArray,
-        maxDimension: Int,
+        request: AndroidCompressedImageRequest,
+    ): ByteArray? {
+        if (request.maxWidth <= 0 || request.maxHeight <= 0 || request.quality !in 1..100 || encodedBytes.isEmpty() || !ensureLoaded()) return null
+        val compressed = nativeDecodeAndCompress(
+            encodedBytes = encodedBytes,
+            maxWidth = request.maxWidth,
+            maxHeight = request.maxHeight,
+            scaleMode = request.scaleMode.toNativeValue(),
+            colorConfig = request.colorConfig.toNativeValue(),
+            quality = request.quality,
+        )
+        if (compressed != null) {
+            debugLog(
+                NativeImageLogTag,
+                "Native decode+compress OK for ${request.sourceLabel} (${request.maxWidth}x${request.maxHeight}, mode=${request.scaleMode}, config=${request.colorConfig}, quality=${request.quality}, bytes=${compressed.size})",
+            )
+        } else {
+            debugLog(
+                NativeImageLogTag,
+                "Native decode+compress returned null for ${request.sourceLabel} (${request.maxWidth}x${request.maxHeight}, mode=${request.scaleMode}, config=${request.colorConfig}, quality=${request.quality})",
+            )
+        }
+        return compressed
+    }
+
+    private fun AndroidImageScaleMode.toNativeValue(): Int =
+        when (this) {
+            AndroidImageScaleMode.Fit -> ScaleModeFit
+            AndroidImageScaleMode.CenterCrop -> ScaleModeCenterCrop
+        }
+
+    private fun AndroidImageColorConfig.toNativeValue(): Int =
+        when (this) {
+            AndroidImageColorConfig.Argb8888 -> ColorConfigArgb8888
+            AndroidImageColorConfig.Rgb565 -> ColorConfigRgb565
+        }
+
+    private external fun nativeDecodeBitmap(
+        encodedBytes: ByteArray,
+        maxWidth: Int,
+        maxHeight: Int,
+        scaleMode: Int,
+        colorConfig: Int,
     ): Bitmap?
+
+    private external fun nativeDecodeAndCompress(
+        encodedBytes: ByteArray,
+        maxWidth: Int,
+        maxHeight: Int,
+        scaleMode: Int,
+        colorConfig: Int,
+        quality: Int,
+    ): ByteArray?
 }

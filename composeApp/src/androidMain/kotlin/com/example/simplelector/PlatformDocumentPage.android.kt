@@ -1,7 +1,6 @@
 package com.example.simplelector
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.graphics.pdf.PdfRenderer
 import android.content.pm.ActivityInfo
@@ -526,69 +525,17 @@ private fun loadCbrPageIndex(
 private fun decodeCbzBitmapFromFile(
     file: File,
     maxDimension: Int,
-): Bitmap? {
-    AndroidNativeImageBridge.decodeScaledBitmapFile(file, maxDimension)?.let { return it }
-    debugLog(
-        NativeImageLogTag,
-        "Falling back to BitmapFactory for reader image ${file.name} (maxDimension=$maxDimension)",
-    )
-
-    val bounds = BitmapFactory.Options().apply {
-        inJustDecodeBounds = true
-    }
-    BitmapFactory.decodeFile(file.absolutePath, bounds)
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-    val options = BitmapFactory.Options().apply {
-        inSampleSize = calculateCbzInSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
-        inPreferredConfig = Bitmap.Config.RGB_565
-    }
-    return BitmapFactory.decodeFile(file.absolutePath, options)
-}
+): Bitmap? = AndroidImagePipeline.decodeReaderBitmapFromFile(file, maxDimension)
 
 private fun decodeCbzBitmapFromBytes(
     encodedBytes: ByteArray,
     sourceLabel: String,
     maxDimension: Int,
-): Bitmap? {
-    AndroidNativeImageBridge.decodeScaledBitmapBytes(
-        encodedBytes = encodedBytes,
-        maxDimension = maxDimension,
-        sourceLabel = sourceLabel,
-    )?.let { return it }
-    debugLog(
-        NativeImageLogTag,
-        "Falling back to BitmapFactory for reader image $sourceLabel (maxDimension=$maxDimension)",
-    )
-
-    val bounds = BitmapFactory.Options().apply {
-        inJustDecodeBounds = true
-    }
-    BitmapFactory.decodeByteArray(encodedBytes, 0, encodedBytes.size, bounds)
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-    val options = BitmapFactory.Options().apply {
-        inSampleSize = calculateCbzInSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
-        inPreferredConfig = Bitmap.Config.RGB_565
-    }
-    return BitmapFactory.decodeByteArray(encodedBytes, 0, encodedBytes.size, options)
-}
-
-private fun calculateCbzInSampleSize(
-    width: Int,
-    height: Int,
-    maxDimension: Int,
-): Int {
-    var sampleSize = 1
-    var scaledWidth = width
-    var scaledHeight = height
-    while (scaledWidth > maxDimension || scaledHeight > maxDimension) {
-        sampleSize *= 2
-        scaledWidth = width / sampleSize
-        scaledHeight = height / sampleSize
-    }
-    return sampleSize.coerceAtLeast(1)
-}
+): Bitmap? = AndroidImagePipeline.decodeReaderBitmapFromBytes(
+    encodedBytes = encodedBytes,
+    sourceLabel = sourceLabel,
+    maxDimension = maxDimension,
+)
 
 private fun normalizeCbzEntryPath(path: String): String =
     path.replace('\\', '/').trimStart('/')
