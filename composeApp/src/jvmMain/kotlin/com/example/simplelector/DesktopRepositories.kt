@@ -10,6 +10,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.prefs.Preferences
 import java.util.zip.ZipInputStream
+import java.util.zip.ZipFile
 
 private const val FolderSeparator = "\n"
 private const val FolderPathsKey = "folder.paths"
@@ -24,6 +25,50 @@ private data class DesktopComicScanResult(
     val author: String?,
     val pageCount: Int,
 )
+
+private data class DesktopEpubIndex(
+    val title: String?,
+    val author: String?,
+    val contentPaths: List<String>,
+    val coverEntryPath: String?,
+    val navigationEntries: List<EpubNavigationEntry>,
+    val navigationTitles: Map<String, String>,
+    val entryNameByNormalizedPath: Map<String, String>,
+)
+
+private object DesktopEpubIndexCache {
+    private const val MAX_ENTRIES = 6
+    private val indexes = LinkedHashMap<String, DesktopEpubIndex>(MAX_ENTRIES, 0.75f, true)
+
+    @Synchronized
+    fun get(sourceId: String): DesktopEpubIndex? = indexes[sourceId]
+
+    @Synchronized
+    fun put(sourceId: String, index: DesktopEpubIndex) {
+        indexes[sourceId] = index
+        while (indexes.size > MAX_ENTRIES) {
+            val eldest = indexes.entries.firstOrNull() ?: break
+            indexes.remove(eldest.key)
+        }
+    }
+}
+
+private object DesktopParsedEpubCache {
+    private const val MAX_ENTRIES = 2
+    private val parsed = LinkedHashMap<String, ParsedEpub>(MAX_ENTRIES, 0.75f, true)
+
+    @Synchronized
+    fun get(sourceId: String): ParsedEpub? = parsed[sourceId]
+
+    @Synchronized
+    fun put(sourceId: String, epub: ParsedEpub) {
+        parsed[sourceId] = epub
+        while (parsed.size > MAX_ENTRIES) {
+            val eldest = parsed.entries.firstOrNull() ?: break
+            parsed.remove(eldest.key)
+        }
+    }
+}
 
 class DesktopLibraryRepository : LibraryRepository {
     private val scanCacheDirectory: File
@@ -109,7 +154,7 @@ class DesktopReaderRepository : ReaderRepository {
                     "pdf" -> buildReaderDocumentFromDesktopPdf(file)
                     "txt" -> buildReaderDocumentFromText(decodeBookText(file.readBytes()), pageWeightLimit = textPageWeightLimit)
                     "md", "markdown" -> buildReaderDocumentFromMarkdown(decodeBookText(file.readBytes()), pageWeightLimit = textPageWeightLimit)
-                    "epub" -> buildReaderDocumentFromEpub(parseEpub(readZipEntries(file)), pageWeightLimit = textPageWeightLimit)
+                    "epub" -> loadDesktopParsedEpub(file)?.let { buildReaderDocumentFromEpub(it, pageWeightLimit = textPageWeightLimit) }
                     "cbz", "cbr" -> buildDesktopVisualReaderDocument(book.totalPages)
                     else -> null
                 }
@@ -126,7 +171,7 @@ class DesktopReaderRepository : ReaderRepository {
             if (!file.isFile) return@withContext null
             val generated = when (book.format.lowercase()) {
                 "pdf" -> renderDesktopPdfCover(file)
-                "epub" -> extractEpubCoverBytes(readZipEntries(file))
+                "epub" -> extractDesktopEpubCover(file)
                 "cbz" -> extractDesktopCbzCover(file)
                 "cbr" -> extractDesktopCbrCover(file)
                 else -> null
@@ -296,7 +341,7 @@ private fun enrichDesktopBookMetadata(file: File, book: Book): Book {
             )
         }
         "epub" -> {
-            val epub = parseEpub(readZipEntries(file.readBytes()))
+            val epub = loadDesktopEpubIndex(file) ?: return book
             book.withMetadata(title = epub.title, author = epub.author)
         }
         "cbz" -> {
@@ -325,9 +370,180 @@ private fun enrichDesktopBookMetadata(file: File, book: Book): Book {
     }
 }
 
-private fun extractEpubCover(bytes: ByteArray): ByteArray? {
-    val entries = readZipEntries(bytes)
-    return extractEpubCoverBytes(entries)
+private fun loadDesktopEpubIndex(file: File): DesktopEpubIndex? {
+    val sourceCacheKey = desktopEpubCacheKey(file)
+    DesktopEpubIndexCache.get(sourceCacheKey)?.let { return it }
+
+    val index = ZipFile(file).use { zipFile ->
+        val entryNameByNormalizedPath = zipFile.entries().asSequence()
+            .filterNot { it.isDirectory }
+            .associateBy(
+                keySelector = { normalizeArchivePath(it.name) },
+                valueTransform = { it.name },
+            )
+
+        val containerPath = entryNameByNormalizedPath["meta-inf/container.xml"] ?: return@use null
+        val containerXml = zipFile.readTextEntry(containerPath) ?: return@use null
+        val rootFile = extractRootFilePath(containerXml)?.let(::normalizeArchivePath) ?: return@use null
+        val opfPath = entryNameByNormalizedPath[rootFile] ?: return@use null
+        val opfXml = zipFile.readTextEntry(opfPath) ?: return@use null
+        val opfDirectory = rootFile.substringBeforeLast('/', "")
+
+        val manifest = parseManifest(opfXml, opfDirectory)
+        val orderedContentPaths = parseSpineOrder(opfXml, manifest)
+            .filter(::isSupportedDesktopEpubTextPath)
+        val fallbackContentPaths = entryNameByNormalizedPath.keys
+            .asSequence()
+            .filterNot { it.startsWith("meta-inf/") }
+            .filter(::isSupportedDesktopEpubTextPath)
+            .sorted()
+            .toList()
+        val contentPaths = orderedContentPaths.ifEmpty { fallbackContentPaths }
+
+        val navigationDocuments = buildList {
+            manifest.values
+                .filter { item ->
+                    "nav" in item.properties.lowercase() ||
+                        item.mediaType == "application/xhtml+xml"
+                }
+                .forEach { add(it.href) }
+            manifest.values
+                .firstOrNull { it.mediaType == "application/x-dtbncx+xml" }
+                ?.href
+                ?.let(::add)
+        }.distinct()
+
+        val navigationEntries = parseNavigationEntries(
+            opfXml = opfXml,
+            manifest = manifest,
+            entries = navigationDocuments.mapNotNull { path ->
+                val entryName = entryNameByNormalizedPath[path] ?: return@mapNotNull null
+                val bytes = zipFile.readEntryBytes(entryName) ?: return@mapNotNull null
+                path to bytes
+            }.toMap(linkedMapOf()),
+        )
+
+        val navigationTitles = linkedMapOf<String, String>()
+        navigationEntries.forEach { entry ->
+            val path = entry.href.substringBefore('#')
+            if (path.isNotBlank() && path !in navigationTitles) {
+                navigationTitles[path] = entry.title
+            }
+        }
+
+        DesktopEpubIndex(
+            title = extractDcTitle(opfXml),
+            author = extractDcCreator(opfXml),
+            contentPaths = contentPaths,
+            coverEntryPath = findCoverPath(opfXml, manifest, entryNameByNormalizedPath.keys),
+            navigationEntries = navigationEntries,
+            navigationTitles = navigationTitles,
+            entryNameByNormalizedPath = entryNameByNormalizedPath,
+        )
+    } ?: return null
+
+    DesktopEpubIndexCache.put(sourceCacheKey, index)
+    return index
+}
+
+private fun loadDesktopParsedEpub(file: File): ParsedEpub? {
+    val sourceCacheKey = desktopEpubCacheKey(file)
+    DesktopParsedEpubCache.get(sourceCacheKey)?.let { return it }
+
+    val index = loadDesktopEpubIndex(file) ?: return null
+    val parsed = ZipFile(file).use { zipFile ->
+        parseDesktopEpub(zipFile, index)
+    }
+    DesktopParsedEpubCache.put(sourceCacheKey, parsed)
+    return parsed
+}
+
+private fun parseDesktopEpub(
+    zipFile: ZipFile,
+    index: DesktopEpubIndex,
+): ParsedEpub {
+    val sections = index.contentPaths.mapNotNull { path ->
+        val entryName = index.entryNameByNormalizedPath[path] ?: return@mapNotNull null
+        val bytes = zipFile.readEntryBytes(entryName) ?: return@mapNotNull null
+        val rawBlocks = if (path.endsWith(".txt")) {
+            bytes.decodeToString()
+                .replace("\r\n", "\n")
+                .split(Regex("\\n\\s*\\n"))
+                .mapNotNull { paragraph ->
+                    paragraph.trim()
+                        .takeIf { it.isNotBlank() }
+                        ?.let { ReaderContentBlock(kind = ReaderContentKind.Paragraph, text = it) }
+                }
+        } else {
+            htmlToReaderBlocks(bytes.decodeToString()) { rawSource ->
+                resolveDesktopEpubImageBytes(
+                    zipFile = zipFile,
+                    entryNameByNormalizedPath = index.entryNameByNormalizedPath,
+                    basePath = path.substringBeforeLast('/', ""),
+                    rawSource = rawSource,
+                )
+            }
+        }
+        val blocks = cleanSectionBlocks(path, rawBlocks).filter { block ->
+            when (block.kind) {
+                ReaderContentKind.Image -> block.imageBytes != null || !block.imageDescription.isNullOrBlank()
+                else -> block.text.isNotBlank()
+            }
+        }.map { block ->
+            if (block.navigationHref != null) {
+                block.copy(navigationBasePath = path)
+            } else {
+                block
+            }
+        }
+
+        if (blocks.isEmpty()) {
+            null
+        } else {
+            ReaderSectionSource(
+                path = path,
+                title = index.navigationTitles[path] ?: extractSectionTitle(path, blocks),
+                blocks = blocks,
+            )
+        }
+    }
+
+    return ParsedEpub(
+        title = index.title,
+        author = index.author,
+        sections = sections,
+        coverEntryPath = index.coverEntryPath,
+        navigationEntries = index.navigationEntries,
+    )
+}
+
+private fun extractDesktopEpubCover(file: File): ByteArray? {
+    val index = loadDesktopEpubIndex(file) ?: return null
+    val entryName = index.coverEntryPath?.let(index.entryNameByNormalizedPath::get) ?: return null
+    return ZipFile(file).use { zipFile ->
+        zipFile.readEntryBytes(entryName)
+    }
+}
+
+private fun resolveDesktopEpubImageBytes(
+    zipFile: ZipFile,
+    entryNameByNormalizedPath: Map<String, String>,
+    basePath: String,
+    rawSource: String,
+): ByteArray? {
+    val source = rawSource.substringBefore('#').substringBefore('?').trim()
+    if (source.isBlank()) return null
+    if (source.startsWith("data:", ignoreCase = true)) {
+        return decodeInlineDataImage(source)
+    }
+    val resolvedPath = resolveArchivePath(basePath, source)
+    val entryName = entryNameByNormalizedPath[resolvedPath] ?: return null
+    return zipFile.readEntryBytes(entryName)
+}
+
+private fun isSupportedDesktopEpubTextPath(path: String): Boolean {
+    val lower = path.lowercase()
+    return lower.endsWith(".xhtml") || lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".txt")
 }
 
 private fun buildDesktopVisualReaderDocument(totalPages: Int): ReaderDocument =
@@ -603,6 +819,14 @@ private fun readZipEntries(file: File): Map<String, ByteArray> {
     return entries
 }
 
+private fun ZipFile.readEntryBytes(entryName: String): ByteArray? =
+    getEntry(entryName)?.let { entry ->
+        getInputStream(entry).use { input -> input.readBytes() }
+    }
+
+private fun ZipFile.readTextEntry(entryName: String): String? =
+    readEntryBytes(entryName)?.decodeToString()
+
 private fun pruneCoverCacheDirectory(directory: File?, maxFiles: Int = 220) {
     val files = directory?.listFiles()?.filter(File::isFile).orEmpty()
     if (files.size <= maxFiles) return
@@ -618,6 +842,15 @@ private fun sha256Hex(value: String): String =
     MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray())
         .joinToString("") { byte -> "%02x".format(byte) }
+
+private fun desktopEpubCacheKey(file: File): String =
+    buildString {
+        append(file.absolutePath)
+        append('|')
+        append(file.length())
+        append('|')
+        append(file.lastModified())
+    }
 
 private fun normalizeDesktopReaderException(error: Throwable): Throwable =
     if (error.isUnsupportedDesktopRar5()) {

@@ -591,13 +591,13 @@ private fun extractTagText(xml: String, tagName: String): String? =
         ?.trim()
         ?.takeIf { it.isNotBlank() }
 
-private fun extractAttribute(attributes: String, name: String): String? =
+internal fun extractAttribute(attributes: String, name: String): String? =
     Regex("""\b$name\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
         .find(attributes)
         ?.groupValues
         ?.getOrNull(1)
 
-private fun resolveArchivePath(basePath: String, relativePath: String): String {
+internal fun resolveArchivePath(basePath: String, relativePath: String): String {
     val normalizedRelative = normalizeArchivePath(relativePath)
     if (normalizedRelative.startsWith("/")) {
         return normalizedRelative.removePrefix("/")
@@ -697,7 +697,7 @@ internal fun normalizeArchivePath(path: String): String =
 private fun String.isEpubImagePath(): Boolean =
     endsWith(".jpg") || endsWith(".jpeg") || endsWith(".png") || endsWith(".webp")
 
-private fun extractSectionTitle(path: String, blocks: List<ReaderContentBlock>): String? {
+internal fun extractSectionTitle(path: String, blocks: List<ReaderContentBlock>): String? {
     val heading = blocks
         .firstOrNull { it.kind == ReaderContentKind.Heading }
         ?.text
@@ -711,7 +711,7 @@ private fun extractSectionTitle(path: String, blocks: List<ReaderContentBlock>):
         .takeIf { it.isNotBlank() }
 }
 
-private fun cleanSectionBlocks(
+internal fun cleanSectionBlocks(
     path: String,
     blocks: List<ReaderContentBlock>,
 ): List<ReaderContentBlock> {
@@ -767,7 +767,7 @@ private fun String.normalizedCompactKey(): String =
 private fun String.trimmedAsciiLowercase(): String =
     trim().lowercase()
 
-private fun resolveEpubImageBytes(
+internal fun resolveEpubImageBytes(
     basePath: String,
     rawSource: String,
     entries: Map<String, ByteArray>,
@@ -781,8 +781,17 @@ private fun resolveEpubImageBytes(
     return entries[resolvedPath]
 }
 
+internal fun resolveEpubResourcePath(
+    basePath: String,
+    rawSource: String,
+): String? {
+    val source = rawSource.substringBefore('#').substringBefore('?').trim()
+    if (source.isBlank() || source.startsWith("data:", ignoreCase = true)) return null
+    return resolveArchivePath(basePath, source)
+}
+
 @OptIn(ExperimentalEncodingApi::class)
-private fun decodeInlineDataImage(source: String): ByteArray? {
+internal fun decodeInlineDataImage(source: String): ByteArray? {
     val encoded = source.substringAfter("base64,", missingDelimiterValue = "")
     if (encoded.isBlank()) return null
     return runCatching { Base64.decode(encoded) }.getOrNull()

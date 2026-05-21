@@ -33,6 +33,50 @@ private const val CbzCoverMaxImageDimension = 512
 private const val CbzCompressedImageQuality = 82
 private const val NativeImageLogTag = "SimpleLectorNative"
 
+private data class AndroidEpubIndex(
+    val title: String?,
+    val author: String?,
+    val contentPaths: List<String>,
+    val coverEntryPath: String?,
+    val navigationEntries: List<EpubNavigationEntry>,
+    val navigationTitles: Map<String, String>,
+    val entryNameByNormalizedPath: Map<String, String>,
+)
+
+private object AndroidEpubIndexCache {
+    private const val MAX_ENTRIES = 6
+    private val indexes = LinkedHashMap<String, AndroidEpubIndex>(MAX_ENTRIES, 0.75f, true)
+
+    @Synchronized
+    fun get(sourceId: String): AndroidEpubIndex? = indexes[sourceId]
+
+    @Synchronized
+    fun put(sourceId: String, index: AndroidEpubIndex) {
+        indexes[sourceId] = index
+        while (indexes.size > MAX_ENTRIES) {
+            val eldest = indexes.entries.firstOrNull() ?: break
+            indexes.remove(eldest.key)
+        }
+    }
+}
+
+private object AndroidParsedEpubCache {
+    private const val MAX_ENTRIES = 2
+    private val parsed = LinkedHashMap<String, ParsedEpub>(MAX_ENTRIES, 0.75f, true)
+
+    @Synchronized
+    fun get(sourceId: String): ParsedEpub? = parsed[sourceId]
+
+    @Synchronized
+    fun put(sourceId: String, epub: ParsedEpub) {
+        parsed[sourceId] = epub
+        while (parsed.size > MAX_ENTRIES) {
+            val eldest = parsed.entries.firstOrNull() ?: break
+            parsed.remove(eldest.key)
+        }
+    }
+}
+
 class AndroidLibraryRepository(
     private val context: Context,
 ) : LibraryRepository {
@@ -174,9 +218,9 @@ class AndroidReaderRepository(
                         buildReaderDocumentFromMarkdown(decodeBookText(bytes))
                     }
                     "epub" -> {
-                        withTempAndroidZipFile(contentResolver, context.cacheDir, uri, book.signature) { zipFile ->
-                            buildReaderDocumentFromEpub(parseEpub(readZipEntries(zipFile)))
-                        } ?: throw IllegalStateException(MissingBookMessage)
+                        val parsedEpub = loadAndroidParsedEpub(contentResolver, context.cacheDir, uri, book.signature)
+                            ?: throw IllegalStateException(MissingBookMessage)
+                        buildReaderDocumentFromEpub(parsedEpub)
                     }
                     "cbz" -> buildVisualReaderDocument(book.totalPages)
                     "cbr" -> {
@@ -626,43 +670,13 @@ private fun inspectAndroidEpub(
     uri: Uri,
     sourceVersionKey: String,
 ): ParsedEpub? =
-    withTempAndroidZipFile(contentResolver, cacheDir, uri, sourceVersionKey) { zipFile ->
-        val normalizedEntries = zipFile.entries().asSequence()
-            .filterNot { it.isDirectory }
-            .associateBy(
-                keySelector = { normalizeArchivePath(it.name) },
-                valueTransform = { it.name },
-            )
-
-        val containerPath = normalizedEntries["meta-inf/container.xml"] ?: return@withTempAndroidZipFile null
-        val containerXml = zipFile.readTextEntry(containerPath) ?: return@withTempAndroidZipFile null
-        val rootFile = extractRootFilePath(containerXml)?.let(::normalizeArchivePath) ?: return@withTempAndroidZipFile null
-        val opfPath = normalizedEntries[rootFile] ?: return@withTempAndroidZipFile null
-        val opfXml = zipFile.readTextEntry(opfPath) ?: return@withTempAndroidZipFile null
-        val opfDirectory = rootFile.substringBeforeLast('/', "")
-        val manifest = parseManifest(opfXml, opfDirectory)
-        val orderedContentPaths = parseSpineOrder(opfXml, manifest)
-            .filter { entryPath ->
-                val lower = entryPath.lowercase()
-                lower.endsWith(".xhtml") || lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".txt")
-            }
-        val fallbackContentPaths = normalizedEntries.keys
-            .asSequence()
-            .filterNot { it.startsWith("meta-inf/") }
-            .filter { path ->
-                path.endsWith(".xhtml") || path.endsWith(".html") || path.endsWith(".htm") || path.endsWith(".txt")
-            }
-            .sorted()
-            .toList()
-        val contentPaths = orderedContentPaths.ifEmpty { fallbackContentPaths }
-        val title = extractDcTitle(opfXml)
-        val author = extractDcCreator(opfXml)
-
+    loadAndroidEpubIndex(contentResolver, cacheDir, uri, sourceVersionKey)?.let { index ->
         ParsedEpub(
-            title = title,
-            author = author,
-            sections = if (contentPaths.isEmpty()) emptyList() else listOf(ReaderSectionSource(title = title, blocks = emptyList())),
-            coverEntryPath = findCoverPath(opfXml, manifest, normalizedEntries.keys),
+            title = index.title,
+            author = index.author,
+            sections = if (index.contentPaths.isEmpty()) emptyList() else listOf(ReaderSectionSource(title = index.title, blocks = emptyList())),
+            coverEntryPath = index.coverEntryPath,
+            navigationEntries = index.navigationEntries,
         )
     }
 
@@ -672,21 +686,13 @@ private fun extractAndroidEpubCover(
     uri: Uri,
     sourceVersionKey: String,
 ): ByteArray? =
-    withTempAndroidZipFile(contentResolver, cacheDir, uri, sourceVersionKey) { zipFile ->
-        val normalizedEntries = zipFile.entries().asSequence()
-            .filterNot { it.isDirectory }
-            .associateBy(
-                keySelector = { normalizeArchivePath(it.name) },
-                valueTransform = { it.name },
-            )
-        val containerPath = normalizedEntries["meta-inf/container.xml"] ?: return@withTempAndroidZipFile null
-        val containerXml = zipFile.readTextEntry(containerPath) ?: return@withTempAndroidZipFile null
-        val rootFile = extractRootFilePath(containerXml)?.let(::normalizeArchivePath) ?: return@withTempAndroidZipFile null
-        val opfPath = normalizedEntries[rootFile] ?: return@withTempAndroidZipFile null
-        val opfXml = zipFile.readTextEntry(opfPath) ?: return@withTempAndroidZipFile null
-        val manifest = parseManifest(opfXml, rootFile.substringBeforeLast('/', ""))
-        val coverPath = findCoverPath(opfXml, manifest, normalizedEntries.keys) ?: return@withTempAndroidZipFile null
-        zipFile.readEntryBytes(normalizedEntries[coverPath] ?: return@withTempAndroidZipFile null)
+    loadAndroidEpubIndex(contentResolver, cacheDir, uri, sourceVersionKey)?.let { epubIndex ->
+        withTempAndroidZipFile(contentResolver, cacheDir, uri, sourceVersionKey) { zipFile ->
+            val entryName = epubIndex.coverEntryPath
+                ?.let(epubIndex.entryNameByNormalizedPath::get)
+                ?: return@withTempAndroidZipFile null
+            zipFile.readEntryBytes(entryName)
+        }
     }
 
 private data class AndroidCbzScanResult(
@@ -694,6 +700,185 @@ private data class AndroidCbzScanResult(
     val author: String?,
     val pageCount: Int,
 )
+
+private fun loadAndroidEpubIndex(
+    contentResolver: ContentResolver,
+    cacheDir: File,
+    uri: Uri,
+    sourceVersionKey: String,
+): AndroidEpubIndex? {
+    val sourceCacheKey = "${uri}|$sourceVersionKey"
+    AndroidEpubIndexCache.get(sourceCacheKey)?.let { return it }
+
+    val index = withTempAndroidZipFile(contentResolver, cacheDir, uri, sourceVersionKey) { zipFile ->
+        val entryNameByNormalizedPath = zipFile.entries().asSequence()
+            .filterNot { it.isDirectory }
+            .associateBy(
+                keySelector = { normalizeArchivePath(it.name) },
+                valueTransform = { it.name },
+            )
+
+        val containerPath = entryNameByNormalizedPath["meta-inf/container.xml"] ?: return@withTempAndroidZipFile null
+        val containerXml = zipFile.readTextEntry(containerPath) ?: return@withTempAndroidZipFile null
+        val rootFile = extractRootFilePath(containerXml)?.let(::normalizeArchivePath) ?: return@withTempAndroidZipFile null
+        val opfPath = entryNameByNormalizedPath[rootFile] ?: return@withTempAndroidZipFile null
+        val opfXml = zipFile.readTextEntry(opfPath) ?: return@withTempAndroidZipFile null
+        val opfDirectory = rootFile.substringBeforeLast('/', "")
+
+        val manifest = parseManifest(opfXml, opfDirectory)
+        val orderedContentPaths = parseSpineOrder(opfXml, manifest)
+            .filter(::isSupportedAndroidEpubTextPath)
+        val fallbackContentPaths = entryNameByNormalizedPath.keys
+            .asSequence()
+            .filterNot { it.startsWith("meta-inf/") }
+            .filter(::isSupportedAndroidEpubTextPath)
+            .sorted()
+            .toList()
+        val contentPaths = orderedContentPaths.ifEmpty { fallbackContentPaths }
+
+        val navigationDocuments = buildList {
+            manifest.values
+                .filter { item ->
+                    "nav" in item.properties.lowercase() ||
+                        item.mediaType == "application/xhtml+xml"
+                }
+                .forEach { add(it.href) }
+            manifest.values
+                .firstOrNull { it.mediaType == "application/x-dtbncx+xml" }
+                ?.href
+                ?.let(::add)
+        }.distinct()
+
+        val navigationEntries = parseNavigationEntries(
+            opfXml = opfXml,
+            manifest = manifest,
+            entries = navigationDocuments.mapNotNull { path ->
+                val entryName = entryNameByNormalizedPath[path] ?: return@mapNotNull null
+                val bytes = zipFile.readEntryBytes(entryName) ?: return@mapNotNull null
+                path to bytes
+            }.toMap(linkedMapOf()),
+        )
+
+        val navigationTitles = linkedMapOf<String, String>()
+        navigationEntries.forEach { entry ->
+            val path = entry.href.substringBefore('#')
+            if (path.isNotBlank() && path !in navigationTitles) {
+                navigationTitles[path] = entry.title
+            }
+        }
+
+        AndroidEpubIndex(
+            title = extractDcTitle(opfXml),
+            author = extractDcCreator(opfXml),
+            contentPaths = contentPaths,
+            coverEntryPath = findCoverPath(opfXml, manifest, entryNameByNormalizedPath.keys),
+            navigationEntries = navigationEntries,
+            navigationTitles = navigationTitles,
+            entryNameByNormalizedPath = entryNameByNormalizedPath,
+        )
+    } ?: return null
+
+    AndroidEpubIndexCache.put(sourceCacheKey, index)
+    return index
+}
+
+private fun loadAndroidParsedEpub(
+    contentResolver: ContentResolver,
+    cacheDir: File,
+    uri: Uri,
+    sourceVersionKey: String,
+): ParsedEpub? {
+    val sourceCacheKey = "${uri}|$sourceVersionKey"
+    AndroidParsedEpubCache.get(sourceCacheKey)?.let { return it }
+
+    val epubIndex = loadAndroidEpubIndex(contentResolver, cacheDir, uri, sourceVersionKey) ?: return null
+    val parsed = withTempAndroidZipFile(contentResolver, cacheDir, uri, sourceVersionKey) { zipFile ->
+        parseAndroidEpub(zipFile, epubIndex)
+    } ?: return null
+
+    AndroidParsedEpubCache.put(sourceCacheKey, parsed)
+    return parsed
+}
+
+private fun parseAndroidEpub(
+    zipFile: ZipFile,
+    index: AndroidEpubIndex,
+): ParsedEpub {
+    val sections = index.contentPaths.mapNotNull { path ->
+        val entryName = index.entryNameByNormalizedPath[path] ?: return@mapNotNull null
+        val bytes = zipFile.readEntryBytes(entryName) ?: return@mapNotNull null
+        val rawBlocks = if (path.endsWith(".txt")) {
+            bytes.decodeToString()
+                .replace("\r\n", "\n")
+                .split(Regex("\\n\\s*\\n"))
+                .mapNotNull { paragraph ->
+                    paragraph.trim()
+                        .takeIf { it.isNotBlank() }
+                        ?.let { ReaderContentBlock(kind = ReaderContentKind.Paragraph, text = it) }
+                }
+        } else {
+            htmlToReaderBlocks(bytes.decodeToString()) { rawSource ->
+                resolveAndroidEpubImageBytes(
+                    zipFile = zipFile,
+                    entryNameByNormalizedPath = index.entryNameByNormalizedPath,
+                    basePath = path.substringBeforeLast('/', ""),
+                    rawSource = rawSource,
+                )
+            }
+        }
+        val blocks = cleanSectionBlocks(path, rawBlocks).filter { block ->
+            when (block.kind) {
+                ReaderContentKind.Image -> block.imageBytes != null || !block.imageDescription.isNullOrBlank()
+                else -> block.text.isNotBlank()
+            }
+        }.map { block ->
+            if (block.navigationHref != null) {
+                block.copy(navigationBasePath = path)
+            } else {
+                block
+            }
+        }
+
+        if (blocks.isEmpty()) {
+            null
+        } else {
+            ReaderSectionSource(
+                path = path,
+                title = index.navigationTitles[path] ?: extractSectionTitle(path, blocks),
+                blocks = blocks,
+            )
+        }
+    }
+
+    return ParsedEpub(
+        title = index.title,
+        author = index.author,
+        sections = sections,
+        coverEntryPath = index.coverEntryPath,
+        navigationEntries = index.navigationEntries,
+    )
+}
+
+private fun resolveAndroidEpubImageBytes(
+    zipFile: ZipFile,
+    entryNameByNormalizedPath: Map<String, String>,
+    basePath: String,
+    rawSource: String,
+): ByteArray? {
+    val source = rawSource.substringBefore('#').substringBefore('?').trim()
+    if (source.isBlank()) return null
+    if (source.startsWith("data:", ignoreCase = true)) {
+        return decodeInlineDataImage(source)
+    }
+    val resolvedPath = resolveArchivePath(basePath, source)
+    val entryName = entryNameByNormalizedPath[resolvedPath] ?: return null
+    return zipFile.readEntryBytes(entryName)
+}
+
+private fun isSupportedAndroidEpubTextPath(path: String): Boolean {
+    val lower = path.lowercase()
+    return lower.endsWith(".xhtml") || lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".txt")
+}
 
 private fun inspectAndroidCbz(
     contentResolver: ContentResolver,
