@@ -65,7 +65,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Deb)
             packageName = "SimpleLector"
-            packageVersion = "1.0.3"
+            packageVersion = "1.0.5"
             description = "Lector de libros SimpleLector"
             vendor = "Lextrack Studios"
 
