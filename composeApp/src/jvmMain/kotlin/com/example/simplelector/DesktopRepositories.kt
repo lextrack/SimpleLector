@@ -2,6 +2,7 @@ package com.example.simplelector
 
 import com.github.junrar.Archive
 import com.github.junrar.exception.UnsupportedRarV5Exception
+import com.github.junrar.rarfile.FileHeader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
@@ -566,27 +567,22 @@ private fun inspectDesktopCbz(file: File): DesktopComicScanResult {
     var comicInfoXml: String? = null
     var pageCount = 0
 
-    file.inputStream().buffered().use { input ->
-        ZipInputStream(input).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory) {
-                    val path = entry.name
-                        .replace('\\', '/')
-                        .trimStart('/')
-                        .lowercase()
-                    when {
-                        path.endsWith("comicinfo.xml", ignoreCase = true) -> {
-                            comicInfoXml = zip.readBytes().decodeToString()
-                        }
-                        path.isSupportedDesktopComicImage() -> {
-                            pageCount += 1
+    ZipFile(file).use { zipFile ->
+        zipFile.entries().asSequence()
+            .filterNot { it.isDirectory }
+            .forEach { entry ->
+                val path = normalizeDesktopArchivePath(entry.name)
+                when {
+                    path.endsWith("comicinfo.xml", ignoreCase = true) -> {
+                        zipFile.getInputStream(entry).use { input ->
+                            comicInfoXml = input.readBytes().decodeToString()
                         }
                     }
+                    path.isSupportedDesktopComicImage() -> {
+                        pageCount += 1
+                    }
                 }
-                zip.closeEntry()
             }
-        }
     }
 
     return DesktopComicScanResult(
@@ -598,54 +594,35 @@ private fun inspectDesktopCbz(file: File): DesktopComicScanResult {
 
 private fun extractDesktopCbzCover(file: File): ByteArray? {
     var comicInfoXml: String? = null
-    val imagePaths = mutableListOf<String>()
+    val imageEntries = mutableListOf<Pair<String, String>>()
 
-    file.inputStream().buffered().use { input ->
-        ZipInputStream(input).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory) {
-                    val path = entry.name
-                        .replace('\\', '/')
-                        .trimStart('/')
-                        .lowercase()
-                    when {
-                        path.endsWith("comicinfo.xml", ignoreCase = true) -> {
-                            comicInfoXml = zip.readBytes().decodeToString()
-                        }
-                        path.isSupportedDesktopComicImage() -> {
-                            imagePaths += path
+    ZipFile(file).use { zipFile ->
+        zipFile.entries().asSequence()
+            .filterNot { it.isDirectory }
+            .forEach { entry ->
+                val path = normalizeDesktopArchivePath(entry.name)
+                when {
+                    path.endsWith("comicinfo.xml", ignoreCase = true) -> {
+                        zipFile.getInputStream(entry).use { input ->
+                            comicInfoXml = input.readBytes().decodeToString()
                         }
                     }
+                    path.isSupportedDesktopComicImage() -> {
+                        imageEntries += path to entry.name
+                    }
                 }
-                zip.closeEntry()
             }
-        }
     }
 
-    val targetPath = imagePaths
-        .sortedWith(compareByNaturalDesktopComicPath<String> { it })
+    val targetEntryName = imageEntries
+        .sortedWith(compareByNaturalDesktopComicPath<Pair<String, String>> { it.first })
         .getOrNull(comicInfoXml?.let(::extractDesktopComicInfoCoverIndex) ?: 0)
+        ?.second
         ?: return null
 
-    file.inputStream().buffered().use { input ->
-        ZipInputStream(input).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory) {
-                    val path = entry.name
-                        .replace('\\', '/')
-                        .trimStart('/')
-                        .lowercase()
-                    if (path == targetPath) {
-                        return zip.readBytes()
-                    }
-                }
-                zip.closeEntry()
-            }
-        }
+    return ZipFile(file).use { zipFile ->
+        zipFile.readEntryBytes(targetEntryName)
     }
-    return null
 }
 
 private fun inspectDesktopCbr(file: File): DesktopComicScanResult {
@@ -683,7 +660,7 @@ private fun inspectDesktopCbr(file: File): DesktopComicScanResult {
 
 private fun extractDesktopCbrCover(file: File): ByteArray? {
     var comicInfoXml: String? = null
-    val imagePaths = mutableListOf<String>()
+    val imageEntries = mutableListOf<Pair<String, FileHeader>>()
 
     Archive(file).use { archive ->
         archive.fileHeaders.forEach { header ->
@@ -701,30 +678,19 @@ private fun extractDesktopCbrCover(file: File): ByteArray? {
                     }
                 }
                 path.isSupportedDesktopComicImage() -> {
-                    imagePaths += path
+                    imageEntries += path to header
                 }
             }
         }
-    }
 
-    val targetPath = imagePaths
-        .sortedWith(compareByNaturalDesktopComicPath<String> { it })
-        .getOrNull(comicInfoXml?.let(::extractDesktopComicInfoCoverIndex) ?: 0)
-        ?: return null
+        val selectedHeader = imageEntries
+            .sortedWith(compareByNaturalDesktopComicPath<Pair<String, FileHeader>> { it.first })
+            .getOrNull(comicInfoXml?.let(::extractDesktopComicInfoCoverIndex) ?: 0)
+            ?.second
+            ?: return null
 
-    Archive(file).use { archive ->
-        archive.fileHeaders.forEach { header ->
-            if (header.isDirectory) return@forEach
-            val path = header.fileName
-                .orEmpty()
-                .replace('\\', '/')
-                .trimStart('/')
-                .lowercase()
-            if (path == targetPath) {
-                archive.getInputStream(header)?.use { input ->
-                    return input.readBytes()
-                }
-            }
+        archive.getInputStream(selectedHeader)?.use { input ->
+            return input.readBytes()
         }
     }
     return null
@@ -874,6 +840,9 @@ private fun String.isSupportedDesktopComicImage(): Boolean =
             path.endsWith(".bmp") ||
             path.endsWith(".avif")
     }
+
+private fun normalizeDesktopArchivePath(path: String): String =
+    path.replace('\\', '/').trimStart('/').lowercase()
 
 private fun <T> compareByNaturalDesktopComicPath(selector: (T) -> String): Comparator<T> =
     Comparator { left, right ->

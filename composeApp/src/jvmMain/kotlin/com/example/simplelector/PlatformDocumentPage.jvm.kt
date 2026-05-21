@@ -53,6 +53,7 @@ import java.io.File
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import javax.imageio.ImageIO
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import kotlin.math.roundToInt
 
@@ -334,30 +335,28 @@ private fun renderDesktopCbzPageBitmap(file: File, pageNumber: Int): ImageBitmap
     val pagePaths = loadDesktopCbzPageIndex(file)
     val targetPath = pagePaths.getOrNull((pageNumber - 1).coerceAtLeast(0)) ?: return null
 
-    file.inputStream().buffered().use { input ->
-        ZipInputStream(input).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory && normalizeDesktopComicPath(entry.name) == targetPath) {
-                    return ImageIO.read(zip)
-                        ?.downscaleForDesktopReader(DesktopVisualRenderMaxImageDimension)
-                        ?.toComposeImageBitmap()
-                }
-                zip.closeEntry()
+    return ZipFile(file).use { zipFile ->
+        val entry = zipFile.entries().asSequence()
+            .firstOrNull { candidate ->
+                !candidate.isDirectory && normalizeDesktopComicPath(candidate.name) == targetPath
             }
+            ?: return@use null
+        zipFile.getInputStream(entry).use { input ->
+            ImageIO.read(input)
+                ?.downscaleForDesktopReader(DesktopVisualRenderMaxImageDimension)
+                ?.toComposeImageBitmap()
         }
     }
-    return null
 }
 
 private fun renderDesktopCbrPageBitmap(file: File, pageNumber: Int): ImageBitmap? {
-    val pagePaths = loadDesktopCbrPageIndex(file)
-    val targetPath = pagePaths.getOrNull((pageNumber - 1).coerceAtLeast(0)) ?: return null
+    val entryNames = loadDesktopCbrPageEntries(file)
+    val targetEntryName = entryNames.getOrNull((pageNumber - 1).coerceAtLeast(0)) ?: return null
 
     Archive(file).use { archive ->
         archive.fileHeaders.forEach { header ->
             if (header.isDirectory) return@forEach
-            if (normalizeDesktopComicPath(header.fileName.orEmpty()) != targetPath) return@forEach
+            if (header.fileName.orEmpty() != targetEntryName) return@forEach
             archive.getInputStream(header)?.use { input ->
                 return ImageIO.read(input)
                     ?.downscaleForDesktopReader(DesktopVisualRenderMaxImageDimension)
@@ -373,19 +372,15 @@ private fun loadDesktopCbzPageIndex(file: File): List<String> {
     DesktopComicPageIndexCache.get(sourceId)?.let { return it }
 
     val pages = mutableListOf<String>()
-    file.inputStream().buffered().use { input ->
-        ZipInputStream(input).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory) {
-                    val path = normalizeDesktopComicPath(entry.name)
-                    if (path.isSupportedDesktopVisualComicImage()) {
-                        pages += path
-                    }
+    ZipFile(file).use { zipFile ->
+        zipFile.entries().asSequence()
+            .filterNot { it.isDirectory }
+            .forEach { entry ->
+                val path = normalizeDesktopComicPath(entry.name)
+                if (path.isSupportedDesktopVisualComicImage()) {
+                    pages += path
                 }
-                zip.closeEntry()
             }
-        }
     }
 
     return pages
@@ -394,23 +389,30 @@ private fun loadDesktopCbzPageIndex(file: File): List<String> {
 }
 
 private fun loadDesktopCbrPageIndex(file: File): List<String> {
-    val sourceId = desktopComicCacheKey(file)
-    DesktopComicPageIndexCache.get(sourceId)?.let { return it }
+    val entryNames = loadDesktopCbrPageEntries(file)
+    return entryNames.map(::normalizeDesktopComicPath)
+}
 
-    val pages = mutableListOf<String>()
+private fun loadDesktopCbrPageEntries(file: File): List<String> {
+    val sourceId = desktopComicCacheKey(file)
+    DesktopCbrEntryCache.get(sourceId)?.let { return it }
+
+    val entries = mutableListOf<Pair<String, String>>()
     Archive(file).use { archive ->
         archive.fileHeaders.forEach { header ->
             if (header.isDirectory) return@forEach
-            val path = normalizeDesktopComicPath(header.fileName.orEmpty())
-            if (path.isSupportedDesktopVisualComicImage()) {
-                pages += path
+            val rawPath = header.fileName.orEmpty()
+            val normalizedPath = normalizeDesktopComicPath(rawPath)
+            if (normalizedPath.isSupportedDesktopVisualComicImage()) {
+                entries += normalizedPath to rawPath
             }
         }
     }
 
-    return pages
-        .sortedWith(compareByNaturalDesktopVisualComicPath<String> { it })
-        .also { DesktopComicPageIndexCache.put(sourceId, it) }
+    return entries
+        .sortedWith(compareByNaturalDesktopVisualComicPath<Pair<String, String>> { it.first })
+        .map { it.second }
+        .also { DesktopCbrEntryCache.put(sourceId, it) }
 }
 
 private object DesktopComicPageIndexCache {
@@ -423,6 +425,23 @@ private object DesktopComicPageIndexCache {
     @Synchronized
     fun put(sourceId: String, pagePaths: List<String>) {
         pages[sourceId] = pagePaths
+        while (pages.size > MAX_ENTRIES) {
+            val eldest = pages.entries.firstOrNull() ?: break
+            pages.remove(eldest.key)
+        }
+    }
+}
+
+private object DesktopCbrEntryCache {
+    private const val MAX_ENTRIES = 24
+    private val pages = LinkedHashMap<String, List<String>>(MAX_ENTRIES, 0.75f, true)
+
+    @Synchronized
+    fun get(sourceId: String): List<String>? = pages[sourceId]
+
+    @Synchronized
+    fun put(sourceId: String, entryNames: List<String>) {
+        pages[sourceId] = entryNames
         while (pages.size > MAX_ENTRIES) {
             val eldest = pages.entries.firstOrNull() ?: break
             pages.remove(eldest.key)
