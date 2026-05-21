@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -157,35 +160,24 @@ jobject centerCropBitmap(
 
 jobject decodeBitmapInternal(
     JNIEnv* env,
-    jbyteArray encodedBytes,
+    const jbyte* encodedData,
+    size_t length,
     jint maxWidth,
     jint maxHeight,
     jint scaleMode,
     jint colorConfig
 ) {
-    if (encodedBytes == nullptr || maxWidth <= 0 || maxHeight <= 0) {
-        return nullptr;
-    }
-
-    const jsize length = env->GetArrayLength(encodedBytes);
-    if (length <= 0) {
-        return nullptr;
-    }
-
-    jboolean isCopy = JNI_FALSE;
-    jbyte* encodedData = env->GetByteArrayElements(encodedBytes, &isCopy);
-    if (encodedData == nullptr) {
+    if (encodedData == nullptr || length == 0 || maxWidth <= 0 || maxHeight <= 0) {
         return nullptr;
     }
 
     AImageDecoder* decoder = nullptr;
     const int createResult = AImageDecoder_createFromBuffer(
-        reinterpret_cast<void*>(encodedData),
-        static_cast<size_t>(length),
+        reinterpret_cast<const void*>(encodedData),
+        length,
         &decoder
     );
     if (createResult != ANDROID_IMAGE_DECODER_SUCCESS || decoder == nullptr) {
-        env->ReleaseByteArrayElements(encodedBytes, encodedData, JNI_ABORT);
         logError("AImageDecoder_createFromBuffer failed");
         return nullptr;
     }
@@ -195,7 +187,6 @@ jobject decodeBitmapInternal(
     const int srcHeight = AImageDecoderHeaderInfo_getHeight(headerInfo);
     if (srcWidth <= 0 || srcHeight <= 0) {
         AImageDecoder_delete(decoder);
-        env->ReleaseByteArrayElements(encodedBytes, encodedData, JNI_ABORT);
         logError("Decoded image has invalid size");
         return nullptr;
     }
@@ -203,14 +194,12 @@ jobject decodeBitmapInternal(
     const DecodeSize decodeSize = computeDecodeSize(srcWidth, srcHeight, maxWidth, maxHeight, scaleMode);
     if (AImageDecoder_setAndroidBitmapFormat(decoder, androidBitmapFormatForColorConfig(colorConfig)) != ANDROID_IMAGE_DECODER_SUCCESS) {
         AImageDecoder_delete(decoder);
-        env->ReleaseByteArrayElements(encodedBytes, encodedData, JNI_ABORT);
         logError("Unable to configure bitmap output format");
         return nullptr;
     }
 
     if (AImageDecoder_setTargetSize(decoder, decodeSize.decode_width, decodeSize.decode_height) != ANDROID_IMAGE_DECODER_SUCCESS) {
         AImageDecoder_delete(decoder);
-        env->ReleaseByteArrayElements(encodedBytes, encodedData, JNI_ABORT);
         logError("Unable to configure decoder target size");
         return nullptr;
     }
@@ -218,14 +207,12 @@ jobject decodeBitmapInternal(
     jobject bitmap = createBitmapWithConfig(env, decodeSize.decode_width, decodeSize.decode_height, colorConfig);
     if (bitmap == nullptr) {
         AImageDecoder_delete(decoder);
-        env->ReleaseByteArrayElements(encodedBytes, encodedData, JNI_ABORT);
         return nullptr;
     }
 
     AndroidBitmapInfo bitmapInfo;
     if (AndroidBitmap_getInfo(env, bitmap, &bitmapInfo) != ANDROID_BITMAP_RESULT_SUCCESS) {
         AImageDecoder_delete(decoder);
-        env->ReleaseByteArrayElements(encodedBytes, encodedData, JNI_ABORT);
         env->DeleteLocalRef(bitmap);
         logError("AndroidBitmap_getInfo failed");
         return nullptr;
@@ -234,7 +221,6 @@ jobject decodeBitmapInternal(
     void* pixels = nullptr;
     if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS || pixels == nullptr) {
         AImageDecoder_delete(decoder);
-        env->ReleaseByteArrayElements(encodedBytes, encodedData, JNI_ABORT);
         env->DeleteLocalRef(bitmap);
         logError("AndroidBitmap_lockPixels failed");
         return nullptr;
@@ -249,7 +235,6 @@ jobject decodeBitmapInternal(
 
     AndroidBitmap_unlockPixels(env, bitmap);
     AImageDecoder_delete(decoder);
-    env->ReleaseByteArrayElements(encodedBytes, encodedData, JNI_ABORT);
 
     if (decodeResult != ANDROID_IMAGE_DECODER_SUCCESS) {
         env->DeleteLocalRef(bitmap);
@@ -339,7 +324,32 @@ Java_com_example_simplelector_AndroidNativeImageBridge_nativeDecodeBitmap(
     jint scaleMode,
     jint colorConfig
 ) {
-    return decodeBitmapInternal(env, encodedBytes, maxWidth, maxHeight, scaleMode, colorConfig);
+    if (encodedBytes == nullptr || maxWidth <= 0 || maxHeight <= 0) {
+        return nullptr;
+    }
+
+    const jsize length = env->GetArrayLength(encodedBytes);
+    if (length <= 0) {
+        return nullptr;
+    }
+
+    jboolean isCopy = JNI_FALSE;
+    jbyte* encodedData = env->GetByteArrayElements(encodedBytes, &isCopy);
+    if (encodedData == nullptr) {
+        return nullptr;
+    }
+
+    jobject bitmap = decodeBitmapInternal(
+        env,
+        encodedData,
+        static_cast<size_t>(length),
+        maxWidth,
+        maxHeight,
+        scaleMode,
+        colorConfig
+    );
+    env->ReleaseByteArrayElements(encodedBytes, encodedData, JNI_ABORT);
+    return bitmap;
 }
 
 extern "C"
@@ -354,7 +364,93 @@ Java_com_example_simplelector_AndroidNativeImageBridge_nativeDecodeAndCompress(
     jint colorConfig,
     jint quality
 ) {
-    jobject bitmap = decodeBitmapInternal(env, encodedBytes, maxWidth, maxHeight, scaleMode, colorConfig);
+    jobject bitmap = Java_com_example_simplelector_AndroidNativeImageBridge_nativeDecodeBitmap(
+        env,
+        nullptr,
+        encodedBytes,
+        maxWidth,
+        maxHeight,
+        scaleMode,
+        colorConfig
+    );
+    if (bitmap == nullptr) {
+        return nullptr;
+    }
+    return compressBitmapToWebp(env, bitmap, quality);
+}
+
+extern "C"
+JNIEXPORT jobject JNICALL
+Java_com_example_simplelector_AndroidNativeImageBridge_nativeDecodeBitmapFile(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jstring filePath,
+    jint maxWidth,
+    jint maxHeight,
+    jint scaleMode,
+    jint colorConfig
+) {
+    if (filePath == nullptr || maxWidth <= 0 || maxHeight <= 0) {
+        return nullptr;
+    }
+
+    const char* rawPath = env->GetStringUTFChars(filePath, nullptr);
+    if (rawPath == nullptr) {
+        return nullptr;
+    }
+
+    std::ifstream input(rawPath, std::ios::binary | std::ios::ate);
+    env->ReleaseStringUTFChars(filePath, rawPath);
+    if (!input.is_open()) {
+        logError("Unable to open image file");
+        return nullptr;
+    }
+
+    const std::streamsize size = input.tellg();
+    if (size <= 0) {
+        logError("Image file is empty");
+        return nullptr;
+    }
+    input.seekg(0, std::ios::beg);
+
+    std::vector<char> buffer(static_cast<size_t>(size));
+    if (!input.read(buffer.data(), size)) {
+        logError("Unable to read image file");
+        return nullptr;
+    }
+
+    return decodeBitmapInternal(
+        env,
+        reinterpret_cast<const jbyte*>(buffer.data()),
+        buffer.size(),
+        maxWidth,
+        maxHeight,
+        scaleMode,
+        colorConfig
+    );
+}
+
+extern "C"
+JNIEXPORT jbyteArray JNICALL
+Java_com_example_simplelector_AndroidNativeImageBridge_nativeDecodeAndCompressFile(
+    JNIEnv* env,
+    jobject /* thiz */,
+    jstring filePath,
+    jint maxWidth,
+    jint maxHeight,
+    jint scaleMode,
+    jint colorConfig,
+    jint quality
+) {
+    jobject bitmap = Java_com_example_simplelector_AndroidNativeImageBridge_nativeDecodeBitmapFile(
+        env,
+        nullptr,
+        filePath,
+        maxWidth,
+        maxHeight,
+        scaleMode,
+        colorConfig
+    );
     if (bitmap == nullptr) {
         return nullptr;
     }

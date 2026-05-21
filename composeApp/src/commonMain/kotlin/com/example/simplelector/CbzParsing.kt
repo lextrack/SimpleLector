@@ -106,11 +106,26 @@ private fun extractComicInfoTag(xml: String, tagName: String): String? =
         ?.takeIf { it.isNotBlank() }
 
 private fun extractComicInfoCoverIndex(xml: String): Int? =
-    Regex("""<\s*Page\b[^>]*\bImage\s*=\s*"(\d+)"[^>]*\bType\s*=\s*"[^"]*FrontCover[^"]*"[^>]*/?>""", RegexOption.IGNORE_CASE)
-        .find(xml)
-        ?.groupValues
-        ?.getOrNull(1)
+    extractComicInfoPageAttributes(xml)
+        .firstOrNull { attributes ->
+            attributes["type"]?.contains("frontcover", ignoreCase = true) == true
+        }
+        ?.get("image")
         ?.toIntOrNull()
+
+private fun extractComicInfoPageAttributes(xml: String): Sequence<Map<String, String>> =
+    Regex("""<\s*Page\b([^>]*)/?>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        .findAll(xml)
+        .mapNotNull { match ->
+            match.groupValues.getOrNull(1)?.let(::parseXmlAttributes)
+        }
+
+private fun parseXmlAttributes(rawAttributes: String): Map<String, String> =
+    Regex("([A-Za-z_:][A-Za-z0-9_.:-]*)\\s*=\\s*\"([^\"]*)\"")
+        .findAll(rawAttributes)
+        .associate { match ->
+            match.groupValues[1].lowercase() to match.groupValues[2]
+        }
 
 private fun String.isSupportedCbzImage(): Boolean =
     lowercase().let { path ->

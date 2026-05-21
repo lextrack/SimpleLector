@@ -174,7 +174,7 @@ class AndroidReaderRepository(
                         buildReaderDocumentFromMarkdown(decodeBookText(bytes))
                     }
                     "epub" -> {
-                        withTempAndroidZipFile(contentResolver, context.cacheDir, uri) { zipFile ->
+                        withTempAndroidZipFile(contentResolver, context.cacheDir, uri, book.signature) { zipFile ->
                             buildReaderDocumentFromEpub(parseEpub(readZipEntries(zipFile)))
                         } ?: throw IllegalStateException(MissingBookMessage)
                     }
@@ -198,8 +198,8 @@ class AndroidReaderRepository(
             loadCachedCoverBytes(book)?.let { return@withContext it }
             val uri = Uri.parse(book.id)
             val generated = when (book.format.lowercase()) {
-                "epub" -> extractAndroidEpubCover(contentResolver, context.cacheDir, uri)
-                "cbz" -> extractAndroidCbzCover(contentResolver, context.cacheDir, uri)
+                "epub" -> extractAndroidEpubCover(contentResolver, context.cacheDir, uri, book.signature)
+                "cbz" -> extractAndroidCbzCover(contentResolver, context.cacheDir, uri, book.signature)
                 "cbr" -> extractAndroidCbrCover(contentResolver, context.cacheDir, uri, book.signature)
                 "pdf" -> renderPdfCover(contentResolver, uri)
                 else -> null
@@ -514,7 +514,7 @@ private fun loadAndroidScannableBook(
                 }
             }
             "epub" -> {
-                val epub = inspectAndroidEpub(contentResolver, cacheDir, documentUri)
+                val epub = inspectAndroidEpub(contentResolver, cacheDir, documentUri, book.signature)
                     ?: return AndroidScannableBookResult(book = null, hadError = true)
                 if (epub.sections.isEmpty()) return AndroidScannableBookResult(book = null, hadError = true)
                 AndroidScannableBookResult(
@@ -523,7 +523,7 @@ private fun loadAndroidScannableBook(
                 )
             }
             "cbz" -> {
-                val cbz = inspectAndroidCbz(contentResolver, documentUri)
+                val cbz = inspectAndroidCbz(contentResolver, cacheDir, documentUri, book.signature)
                     ?: return AndroidScannableBookResult(book = null, hadError = true)
                 if (cbz.pageCount <= 0) return AndroidScannableBookResult(book = null, hadError = true)
                 AndroidScannableBookResult(
@@ -624,8 +624,9 @@ private fun inspectAndroidEpub(
     contentResolver: ContentResolver,
     cacheDir: File,
     uri: Uri,
+    sourceVersionKey: String,
 ): ParsedEpub? =
-    withTempAndroidZipFile(contentResolver, cacheDir, uri) { zipFile ->
+    withTempAndroidZipFile(contentResolver, cacheDir, uri, sourceVersionKey) { zipFile ->
         val normalizedEntries = zipFile.entries().asSequence()
             .filterNot { it.isDirectory }
             .associateBy(
@@ -669,8 +670,9 @@ private fun extractAndroidEpubCover(
     contentResolver: ContentResolver,
     cacheDir: File,
     uri: Uri,
+    sourceVersionKey: String,
 ): ByteArray? =
-    withTempAndroidZipFile(contentResolver, cacheDir, uri) { zipFile ->
+    withTempAndroidZipFile(contentResolver, cacheDir, uri, sourceVersionKey) { zipFile ->
         val normalizedEntries = zipFile.entries().asSequence()
             .filterNot { it.isDirectory }
             .associateBy(
@@ -695,29 +697,29 @@ private data class AndroidCbzScanResult(
 
 private fun inspectAndroidCbz(
     contentResolver: ContentResolver,
+    cacheDir: File,
     uri: Uri,
+    sourceVersionKey: String,
 ): AndroidCbzScanResult? {
     var comicInfoXml: String? = null
     var pageCount = 0
 
-    contentResolver.openInputStream(uri)?.use { input ->
-        ZipInputStream(input.buffered()).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory) {
-                    val entryPath = normalizeAndroidCbzPath(entry.name)
-                    when {
-                        entryPath.endsWith("comicinfo.xml", ignoreCase = true) -> {
-                            comicInfoXml = zip.readBytes().decodeToString()
-                        }
-                        entryPath.isSupportedAndroidCbzImage() -> {
-                            pageCount += 1
+    withTempAndroidZipFile(contentResolver, cacheDir, uri, sourceVersionKey) { zipFile ->
+        zipFile.entries().asSequence()
+            .filterNot { it.isDirectory }
+            .forEach { entry ->
+                val entryPath = normalizeAndroidCbzPath(entry.name)
+                when {
+                    entryPath.endsWith("comicinfo.xml", ignoreCase = true) -> {
+                        zipFile.getInputStream(entry).use { input ->
+                            comicInfoXml = input.readBytes().decodeToString()
                         }
                     }
+                    entryPath.isSupportedAndroidCbzImage() -> {
+                        pageCount += 1
+                    }
                 }
-                zip.closeEntry()
             }
-        }
     } ?: return null
 
     val metadata = parseAndroidComicInfo(comicInfoXml)
@@ -791,52 +793,45 @@ private fun extractAndroidCbzCover(
     contentResolver: ContentResolver,
     cacheDir: File,
     uri: Uri,
+    sourceVersionKey: String,
 ): ByteArray? {
-    var comicInfoXml: String? = null
-    val imagePaths = mutableListOf<String>()
+    return withTempAndroidZipFile(contentResolver, cacheDir, uri, sourceVersionKey) { zipFile ->
+        var comicInfoXml: String? = null
+        val imageEntries = mutableListOf<Pair<String, String>>()
 
-    contentResolver.openInputStream(uri)?.use { input ->
-        ZipInputStream(input.buffered()).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory) {
-                    val entryPath = normalizeAndroidCbzPath(entry.name)
-                    when {
-                        entryPath.endsWith("comicinfo.xml", ignoreCase = true) -> {
-                            comicInfoXml = zip.readBytes().decodeToString()
-                        }
-                        entryPath.isSupportedAndroidCbzImage() -> {
-                            imagePaths += entryPath
+        zipFile.entries().asSequence()
+            .filterNot { it.isDirectory }
+            .forEach { entry ->
+                val entryPath = normalizeAndroidCbzPath(entry.name)
+                when {
+                    entryPath.endsWith("comicinfo.xml", ignoreCase = true) -> {
+                        zipFile.getInputStream(entry).use { input ->
+                            comicInfoXml = input.readBytes().decodeToString()
                         }
                     }
-                }
-                zip.closeEntry()
-            }
-        }
-    } ?: return null
-
-    val targetPath = imagePaths
-        .sortedWith(compareByNaturalAndroidArchivePath<String> { it })
-        .getOrNull(comicInfoXml?.let(::extractAndroidComicInfoCoverIndex) ?: 0)
-        ?: return null
-
-    contentResolver.openInputStream(uri)?.use { input ->
-        ZipInputStream(input.buffered()).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory && normalizeAndroidCbzPath(entry.name) == targetPath) {
-                    val tempFile = spillZipEntryToTempFile(zip, cacheDir) ?: return null
-                    return try {
-                        tempFile.downscaleAndroidCbzImageFile(maxDimension = CbzCoverMaxImageDimension)
-                    } finally {
-                        tempFile.delete()
+                    entryPath.isSupportedAndroidCbzImage() -> {
+                        imageEntries += entryPath to entry.name
                     }
                 }
-                zip.closeEntry()
             }
+
+        val targetEntryName = imageEntries
+            .sortedWith(compareByNaturalAndroidArchivePath<Pair<String, String>> { it.first })
+            .getOrNull(comicInfoXml?.let(::extractAndroidComicInfoCoverIndex) ?: 0)
+            ?.second
+            ?: return@withTempAndroidZipFile null
+        val tempFile = File.createTempFile("simplelector-cbz-", ".img", cacheDir)
+        try {
+            zipFile.getInputStream(zipFile.getEntry(targetEntryName) ?: return@withTempAndroidZipFile null).use { input ->
+                tempFile.outputStream().buffered().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            tempFile.downscaleAndroidCbzImageFile(maxDimension = CbzCoverMaxImageDimension)
+        } finally {
+            tempFile.delete()
         }
     }
-    return null
 }
 
 private fun extractAndroidCbrCover(
@@ -845,35 +840,29 @@ private fun extractAndroidCbrCover(
     uri: Uri,
     sourceVersionKey: String,
 ): ByteArray? {
-    var comicInfoXml: String? = null
-    val imageEntries = mutableListOf<Pair<String, FileHeader>>()
-
-    val selectedPath = withTempAndroidCbrArchive(contentResolver, cacheDir, uri, sourceVersionKey) { archive ->
-            archive.fileHeaders.forEach { header ->
-                if (header.isDirectory) return@forEach
-                val entryPath = normalizeAndroidCbzPath(header.fileName.orEmpty())
-                when {
-                    entryPath.endsWith("comicinfo.xml", ignoreCase = true) -> {
-                        archive.getInputStream(header)?.use { fileInput ->
-                            comicInfoXml = fileInput.readBytes().decodeToString()
-                        }
-                    }
-                    entryPath.isSupportedAndroidCbzImage() -> {
-                        imageEntries += entryPath to header
+    return withTempAndroidCbrArchive(contentResolver, cacheDir, uri, sourceVersionKey) { archive ->
+        var comicInfoXml: String? = null
+        val imageEntries = mutableListOf<Pair<String, FileHeader>>()
+        archive.fileHeaders.forEach { header ->
+            if (header.isDirectory) return@forEach
+            val entryPath = normalizeAndroidCbzPath(header.fileName.orEmpty())
+            when {
+                entryPath.endsWith("comicinfo.xml", ignoreCase = true) -> {
+                    archive.getInputStream(header)?.use { fileInput ->
+                        comicInfoXml = fileInput.readBytes().decodeToString()
                     }
                 }
+                entryPath.isSupportedAndroidCbzImage() -> {
+                    imageEntries += entryPath to header
+                }
             }
+        }
 
-            imageEntries
-                .sortedWith(compareByNaturalAndroidArchivePath<Pair<String, FileHeader>> { it.first })
-                .getOrNull(comicInfoXml?.let(::extractAndroidComicInfoCoverIndex) ?: 0)
-                ?.first
-    } ?: return null
-
-    return withTempAndroidCbrArchive(contentResolver, cacheDir, uri, sourceVersionKey) { archive ->
-        val selectedHeader = archive.fileHeaders.firstOrNull { header ->
-            !header.isDirectory && normalizeAndroidCbzPath(header.fileName.orEmpty()) == selectedPath
-        } ?: return@withTempAndroidCbrArchive null
+        val selectedHeader = imageEntries
+            .sortedWith(compareByNaturalAndroidArchivePath<Pair<String, FileHeader>> { it.first })
+            .getOrNull(comicInfoXml?.let(::extractAndroidComicInfoCoverIndex) ?: 0)
+            ?.second
+            ?: return@withTempAndroidCbrArchive null
         val tempFile = File.createTempFile("simplelector-cbr-", ".img", cacheDir)
         try {
             val selectedInput = archive.getInputStream(selectedHeader) ?: return@withTempAndroidCbrArchive null
@@ -889,25 +878,6 @@ private fun extractAndroidCbrCover(
     }
 }
 
-private fun <T> withTempAndroidZipFile(
-    contentResolver: ContentResolver,
-    cacheDir: File,
-    uri: Uri,
-    block: (ZipFile) -> T,
-): T? {
-    val tempFile = File.createTempFile("simplelector-epub-", ".zip", cacheDir)
-    return try {
-        contentResolver.openInputStream(uri)?.use { input ->
-            tempFile.outputStream().buffered().use { output ->
-                input.copyTo(output)
-            }
-        } ?: return null
-        ZipFile(tempFile).use(block)
-    } finally {
-        tempFile.delete()
-    }
-}
-
 private fun ZipFile.readEntryBytes(entryName: String): ByteArray? =
     getEntry(entryName)?.let { entry ->
         getInputStream(entry).use { input -> input.readBytes() }
@@ -915,22 +885,6 @@ private fun ZipFile.readEntryBytes(entryName: String): ByteArray? =
 
 private fun ZipFile.readTextEntry(entryName: String): String? =
     readEntryBytes(entryName)?.decodeToString()
-
-private fun spillZipEntryToTempFile(
-    zip: ZipInputStream,
-    cacheDir: File,
-): File? {
-    val tempFile = File.createTempFile("simplelector-cbz-", ".img", cacheDir)
-    return runCatching {
-        tempFile.outputStream().buffered().use { output ->
-            zip.copyTo(output)
-        }
-        tempFile
-    }.getOrElse {
-        tempFile.delete()
-        null
-    }
-}
 
 private fun File.downscaleAndroidCbzImageFile(maxDimension: Int): ByteArray? {
     return AndroidImagePipeline.createThumbnailBytesFromFile(
@@ -1007,11 +961,26 @@ private fun extractAndroidComicInfoTag(
         ?.takeIf { it.isNotBlank() }
 
 private fun extractAndroidComicInfoCoverIndex(xml: String): Int? =
-    Regex("""<\s*Page\b[^>]*\bImage\s*=\s*"(\d+)"[^>]*\bType\s*=\s*"[^"]*FrontCover[^"]*"[^>]*/?>""", RegexOption.IGNORE_CASE)
-        .find(xml)
-        ?.groupValues
-        ?.getOrNull(1)
+    extractAndroidComicInfoPageAttributes(xml)
+        .firstOrNull { attributes ->
+            attributes["type"]?.contains("frontcover", ignoreCase = true) == true
+        }
+        ?.get("image")
         ?.toIntOrNull()
+
+private fun extractAndroidComicInfoPageAttributes(xml: String): Sequence<Map<String, String>> =
+    Regex("""<\s*Page\b([^>]*)/?>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        .findAll(xml)
+        .mapNotNull { match ->
+            match.groupValues.getOrNull(1)?.let(::parseAndroidXmlAttributes)
+        }
+
+private fun parseAndroidXmlAttributes(rawAttributes: String): Map<String, String> =
+    Regex("([A-Za-z_:][A-Za-z0-9_.:-]*)\\s*=\\s*\"([^\"]*)\"")
+        .findAll(rawAttributes)
+        .associate { match ->
+            match.groupValues[1].lowercase() to match.groupValues[2]
+        }
 
 private fun readZipEntries(bytes: ByteArray): Map<String, ByteArray> {
     val entries = linkedMapOf<String, ByteArray>()

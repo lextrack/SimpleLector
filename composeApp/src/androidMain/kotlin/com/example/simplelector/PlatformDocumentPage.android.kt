@@ -407,36 +407,32 @@ private fun renderVisualDocumentPage(
 ): Bitmap? =
     when (format) {
         "pdf" -> renderPdfPage(contentResolver, uri, pageNumber, theme)
-        "cbz" -> renderCbzPage(contentResolver, uri, sourceVersionKey, pageNumber)
+        "cbz" -> renderCbzPage(contentResolver, cacheDir, uri, sourceVersionKey, pageNumber)
         "cbr" -> renderCbrPage(contentResolver, cacheDir, uri, sourceVersionKey, pageNumber)
         else -> null
     }
 
 private fun renderCbzPage(
     contentResolver: android.content.ContentResolver,
+    cacheDir: File,
     uri: Uri,
     sourceVersionKey: String,
     pageNumber: Int,
 ): Bitmap? {
-    val pagePaths = loadCbzPageIndex(contentResolver, uri, sourceVersionKey)
-    val targetPath = pagePaths.getOrNull((pageNumber - 1).coerceAtLeast(0)) ?: return null
+    val pagePaths = loadCbzPageIndex(contentResolver, cacheDir, uri, sourceVersionKey)
+    val targetEntryName = pagePaths.getOrNull((pageNumber - 1).coerceAtLeast(0)) ?: return null
+    val sourceLabel = normalizeCbzEntryPath(targetEntryName)
 
-    contentResolver.openInputStream(uri)?.use { input ->
-        ZipInputStream(input.buffered()).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory && normalizeCbzEntryPath(entry.name) == targetPath) {
-                    return decodeCbzBitmapFromBytes(
-                        encodedBytes = zip.readBytes(),
-                        sourceLabel = targetPath,
-                        maxDimension = CbzRenderMaxImageDimension,
-                    )
-                }
-                zip.closeEntry()
-            }
+    return withTempAndroidZipFile(contentResolver, cacheDir, uri, sourceVersionKey) { zipFile ->
+        val entry = zipFile.getEntry(targetEntryName) ?: return@withTempAndroidZipFile null
+        zipFile.getInputStream(entry).use {
+            decodeCbzBitmapFromBytes(
+                encodedBytes = it.readBytes(),
+                sourceLabel = sourceLabel,
+                maxDimension = CbzRenderMaxImageDimension,
+            )
         }
     } ?: throw IllegalStateException(appStrings().missingBookMessage)
-    return null
 }
 
 private fun renderCbrPage(
@@ -470,29 +466,25 @@ private fun renderCbrPage(
 
 private fun loadCbzPageIndex(
     contentResolver: android.content.ContentResolver,
+    cacheDir: File,
     uri: Uri,
     sourceVersionKey: String,
 ): List<String> {
     val sourceCacheKey = "${uri}|$sourceVersionKey"
     CbzPageIndexCache.get(sourceCacheKey)?.let { return it }
 
-    val pages = mutableListOf<String>()
-    contentResolver.openInputStream(uri)?.use { input ->
-        ZipInputStream(input.buffered()).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory) {
-                    val path = normalizeCbzEntryPath(entry.name)
-                    if (path.isSupportedCbzEntryImage()) {
-                        pages += path
-                    }
+    val entryNames = mutableListOf<String>()
+    withTempAndroidZipFile(contentResolver, cacheDir, uri, sourceVersionKey) { zipFile ->
+        zipFile.entries().asSequence()
+            .filterNot { it.isDirectory }
+            .forEach { entry ->
+                if (normalizeCbzEntryPath(entry.name).isSupportedCbzEntryImage()) {
+                    entryNames += entry.name
                 }
-                zip.closeEntry()
             }
-        }
     } ?: throw IllegalStateException(appStrings().missingBookMessage)
 
-    val sortedPages = pages.sortedWith(compareByNaturalCbzEntryPath<String> { it })
+    val sortedPages = entryNames.sortedWith(compareByNaturalCbzEntryPath<String> { normalizeCbzEntryPath(it) })
     CbzPageIndexCache.put(sourceCacheKey, sortedPages)
     return sortedPages
 }

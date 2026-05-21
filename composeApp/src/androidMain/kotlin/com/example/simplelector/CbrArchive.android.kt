@@ -5,6 +5,7 @@ import android.net.Uri
 import com.github.junrar.Archive
 import java.io.File
 import java.security.MessageDigest
+import java.util.zip.ZipFile
 
 private const val NativeImageLogTag = "SimpleLectorNative"
 
@@ -68,6 +69,66 @@ internal object AndroidCbrArchiveCache {
     }
 }
 
+internal object AndroidZipArchiveCache {
+    private const val MAX_ENTRIES = 4
+    private val cachedFiles = LinkedHashMap<String, File>(MAX_ENTRIES, 0.75f, true)
+
+    @Synchronized
+    fun getOrCreate(
+        contentResolver: ContentResolver,
+        cacheDir: File,
+        uri: Uri,
+        sourceVersionKey: String,
+    ): File? {
+        val sourceId = uri.toString()
+        val cacheKey = "$sourceId|$sourceVersionKey"
+        cachedFiles[cacheKey]?.takeIf(File::exists)?.let {
+            debugLog(
+                NativeImageLogTag,
+                "ZIP archive cache HIT file=${it.name} size=${cachedFiles.size}",
+            )
+            return it
+        }
+        debugLog(
+            NativeImageLogTag,
+            "ZIP archive cache MISS source=${uri.lastPathSegment ?: sourceId} size=${cachedFiles.size}",
+        )
+
+        val archiveCacheDir = File(cacheDir, "zip-archive-cache").apply { mkdirs() }
+        val tempFile = File(archiveCacheDir, "${sha256Hex(cacheKey)}.zip")
+        return runCatching {
+            contentResolver.openInputStream(uri)?.use { input ->
+                tempFile.outputStream().buffered().use { output ->
+                    input.copyTo(output)
+                }
+            } ?: return null
+            cachedFiles[cacheKey] = tempFile
+            debugLog(
+                NativeImageLogTag,
+                "ZIP archive cache STORE file=${tempFile.name} size=${cachedFiles.size}",
+            )
+            while (cachedFiles.size > MAX_ENTRIES) {
+                val eldest = cachedFiles.entries.firstOrNull() ?: break
+                cachedFiles.remove(eldest.key)?.takeIf(File::exists)?.let { removed ->
+                    removed.delete()
+                    debugLog(
+                        NativeImageLogTag,
+                        "ZIP archive cache EVICT file=${removed.name} size=${cachedFiles.size}",
+                    )
+                }
+            }
+            tempFile
+        }.getOrElse {
+            tempFile.delete()
+            debugLog(
+                NativeImageLogTag,
+                "ZIP archive cache ERROR source=${uri.lastPathSegment ?: sourceId} message=${it.message ?: "unknown"}",
+            )
+            null
+        }
+    }
+}
+
 internal inline fun <T> withTempAndroidCbrArchive(
     contentResolver: ContentResolver,
     cacheDir: File,
@@ -87,6 +148,28 @@ internal inline fun <T> withTempAndroidCbrArchive(
     )
     return Archive(cachedFile).use { archive ->
         block(archive)
+    }
+}
+
+internal inline fun <T> withTempAndroidZipFile(
+    contentResolver: ContentResolver,
+    cacheDir: File,
+    uri: Uri,
+    sourceVersionKey: String,
+    crossinline block: (ZipFile) -> T,
+): T? {
+    val cachedFile = AndroidZipArchiveCache.getOrCreate(
+        contentResolver = contentResolver,
+        cacheDir = cacheDir,
+        uri = uri,
+        sourceVersionKey = sourceVersionKey,
+    ) ?: return null
+    debugLog(
+        NativeImageLogTag,
+        "ZIP archive OPEN file=${cachedFile.name}",
+    )
+    return ZipFile(cachedFile).use { zipFile ->
+        block(zipFile)
     }
 }
 

@@ -369,7 +369,7 @@ private fun renderDesktopCbrPageBitmap(file: File, pageNumber: Int): ImageBitmap
 }
 
 private fun loadDesktopCbzPageIndex(file: File): List<String> {
-    val sourceId = file.absolutePath
+    val sourceId = desktopComicCacheKey(file)
     DesktopComicPageIndexCache.get(sourceId)?.let { return it }
 
     val pages = mutableListOf<String>()
@@ -394,7 +394,7 @@ private fun loadDesktopCbzPageIndex(file: File): List<String> {
 }
 
 private fun loadDesktopCbrPageIndex(file: File): List<String> {
-    val sourceId = file.absolutePath
+    val sourceId = desktopComicCacheKey(file)
     DesktopComicPageIndexCache.get(sourceId)?.let { return it }
 
     val pages = mutableListOf<String>()
@@ -429,6 +429,15 @@ private object DesktopComicPageIndexCache {
         }
     }
 }
+
+private fun desktopComicCacheKey(file: File): String =
+    buildString {
+        append(file.absolutePath)
+        append('|')
+        append(file.length())
+        append('|')
+        append(file.lastModified())
+    }
 
 private fun BufferedImage.downscaleForDesktopReader(maxDimension: Int): BufferedImage {
     if (width <= maxDimension && height <= maxDimension) return this
