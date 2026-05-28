@@ -74,7 +74,7 @@ On Windows:
 
 ### Desktop
 
-Run on Linux or macOS:
+Run on Linux:
 
 ```bash
 ./gradlew :composeApp:run
