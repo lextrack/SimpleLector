@@ -4,6 +4,13 @@ SimpleLector is a Kotlin Multiplatform reader for Android, Windows, and Linux bu
 
 It is designed as a lightweight personal library app for books, documents, and comics, with a shared reading experience across platforms.
 
+## Downloads
+
+[![Android on Google Play](https://img.shields.io/badge/Android-Google_Play-34A853?style=for-the-badge&logo=googleplay&logoColor=white)](https://play.google.com/store/apps/details?id=com.lextrack.simplelector)
+[![Windows and Linux on itch.io](https://img.shields.io/badge/Windows_%26_Linux-itch.io-FA5C5C?style=for-the-badge&logo=itchdotio&logoColor=white)](https://lextrack.itch.io/simple-lector)
+
+Windows and Linux builds are available on itch.io.
+
 ## Features
 
 - Library import from folders
