@@ -969,7 +969,22 @@ private fun BookRow(
         ) {
             BookCover(state, book, coverBytes, onLoadCover, onCoverLoaded)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(book.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        book.title,
+                        modifier = Modifier.weight(1f),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (book.isTemporaryBook()) {
+                        TemporaryBookBadge(compact = true)
+                    }
+                }
                 Text(book.author ?: strings.unknownAuthor, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 FolderPathText(book.path, fontSize = 12.sp, theme = state.readerTheme)
                 book.fileSizeBytes?.let { fileSizeBytes ->
@@ -1328,7 +1343,22 @@ private fun BookCarouselCard(
                     .height(coverHeight),
             )
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(book.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        book.title,
+                        modifier = Modifier.weight(1f),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (book.isTemporaryBook()) {
+                        TemporaryBookBadge(compact = true)
+                    }
+                }
                 Text(
                     book.author ?: strings.unknownAuthor,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1550,7 +1580,6 @@ private fun BookCover(
         modifier = modifier
             .clip(RoundedCornerShape(6.dp))
             .background(formatColor(book.format)),
-        contentAlignment = Alignment.Center,
     ) {
         if (imageBitmap != null) {
             Image(
@@ -1560,7 +1589,9 @@ private fun BookCover(
                 contentScale = ContentScale.Crop,
             )
         } else {
-            Text(book.format.uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(book.format.uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+            }
         }
     }
 }

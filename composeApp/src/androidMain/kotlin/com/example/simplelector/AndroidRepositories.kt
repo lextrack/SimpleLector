@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.provider.DocumentsContract
 import com.github.junrar.exception.UnsupportedRarV5Exception
 import com.github.junrar.rarfile.FileHeader
@@ -32,6 +33,7 @@ private val UnsupportedCbrRar5Message: String
 private const val CbzCoverMaxImageDimension = 512
 private const val CbzCompressedImageQuality = 82
 private const val NativeImageLogTag = "SimpleLectorNative"
+private const val ExternalIntentLogTag = "SimpleLectorExternal"
 
 private data class AndroidEpubIndex(
     val title: String?,
@@ -367,6 +369,56 @@ class AndroidReadingStateStore(
     }
 }
 
+suspend fun inspectExternalAndroidBook(
+    context: Context,
+    uri: Uri,
+    hintedMimeType: String? = null,
+): Book? = withContext(Dispatchers.IO) {
+    val contentResolver = context.contentResolver
+    debugLog(ExternalIntentLogTag, "inspect:start uri=$uri hintedMimeType=$hintedMimeType")
+    val metadata = readExternalAndroidBookMetadata(contentResolver, uri, hintedMimeType)
+    debugLog(
+        ExternalIntentLogTag,
+        "inspect:metadata displayName=${metadata.displayName} size=${metadata.sizeBytes} lastModified=${metadata.lastModifiedMillis} mime=${metadata.mimeType}",
+    )
+    val displayName = resolveExternalAndroidDisplayName(contentResolver, uri, metadata)
+    if (displayName == null) {
+        debugLog(ExternalIntentLogTag, "inspect:displayNameFailed uri=$uri")
+        return@withContext null
+    }
+    debugLog(ExternalIntentLogTag, "inspect:displayNameResolved name=$displayName")
+
+    val baseBook = buildBookFromPath(
+        path = displayName,
+        folderPath = ExternalTemporaryFolderPath,
+        stableId = uri.toString(),
+        sizeBytes = metadata.sizeBytes,
+        lastModifiedMillis = metadata.lastModifiedMillis,
+    )
+    if (baseBook == null) {
+        debugLog(ExternalIntentLogTag, "inspect:buildBookFailed displayName=$displayName")
+        return@withContext null
+    }
+    debugLog(
+        ExternalIntentLogTag,
+        "inspect:baseBook title=${baseBook.title} format=${baseBook.format} signature=${baseBook.signature}",
+    )
+
+    val resolvedBook = loadAndroidScannableBook(
+        contentResolver = contentResolver,
+        cacheDir = context.cacheDir,
+        documentUri = uri,
+        childPath = displayName,
+        book = baseBook,
+        sizeBytes = metadata.sizeBytes,
+    ).book ?: baseBook
+    debugLog(
+        ExternalIntentLogTag,
+        "inspect:resolvedBook title=${resolvedBook.title} format=${resolvedBook.format} pages=${resolvedBook.totalPages} hasRealPages=${resolvedBook.hasRealPageCount}",
+    )
+    resolvedBook
+}
+
 private data class AndroidScanFolderResult(
     val folder: ScannedFolder,
     val cacheEntries: List<BookScanCacheEntry>,
@@ -624,6 +676,180 @@ private fun isTrashedDocument(
     }.getOrDefault(false)
 }
 
+private fun readExternalAndroidBookMetadata(
+    contentResolver: ContentResolver,
+    uri: Uri,
+    hintedMimeType: String? = null,
+): ExternalAndroidBookMetadata {
+    val projection = arrayOf(
+        OpenableColumns.DISPLAY_NAME,
+        OpenableColumns.SIZE,
+        DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+    )
+    val fallbackMimeType = hintedMimeType
+        ?.takeIf { it.isNotBlank() }
+        ?: runCatching { contentResolver.getType(uri) }.getOrNull()
+    return runCatching {
+        contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            if (!cursor.moveToFirst()) {
+                return@use ExternalAndroidBookMetadata(
+                    displayName = null,
+                    sizeBytes = null,
+                    lastModifiedMillis = null,
+                    mimeType = fallbackMimeType,
+                )
+            }
+            val displayNameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+            val lastModifiedIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+            ExternalAndroidBookMetadata(
+                displayName = if (displayNameIndex >= 0) cursor.getString(displayNameIndex) else null,
+                sizeBytes = if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) cursor.getLong(sizeIndex) else null,
+                lastModifiedMillis = if (lastModifiedIndex >= 0 && !cursor.isNull(lastModifiedIndex)) cursor.getLong(lastModifiedIndex) else null,
+                mimeType = fallbackMimeType,
+            )
+        } ?: ExternalAndroidBookMetadata(null, null, null, fallbackMimeType)
+    }.getOrDefault(ExternalAndroidBookMetadata(null, null, null, fallbackMimeType))
+}
+
+private fun resolveExternalAndroidDisplayName(
+    contentResolver: ContentResolver,
+    uri: Uri,
+    metadata: ExternalAndroidBookMetadata,
+): String? {
+    val explicitName = metadata.displayName
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+    if (explicitName != null && explicitName.substringAfterLast('.', "").lowercase() in SupportedExtensions) {
+        return explicitName
+    }
+
+    val uriSegment = uri.lastPathSegment
+        ?.substringAfterLast('/')
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+    if (uriSegment != null && uriSegment.substringAfterLast('.', "").lowercase() in SupportedExtensions) {
+        return uriSegment
+    }
+
+    val mimeExtension = metadata.mimeType.toSupportedBookExtension()
+    val sniffedExtension = sniffExternalAndroidBookExtension(contentResolver, uri, metadata)
+    debugLog(
+        ExternalIntentLogTag,
+        "inspect:extensionCandidates explicit=${explicitName?.substringAfterLast('.', "")} uri=${uriSegment?.substringAfterLast('.', "")} mime=$mimeExtension sniffed=$sniffedExtension",
+    )
+    val extension = mimeExtension
+        ?: sniffedExtension
+        ?: explicitName?.substringAfterLast('.', "")?.lowercase()?.takeIf { it in SupportedExtensions }
+        ?: uriSegment?.substringAfterLast('.', "")?.lowercase()?.takeIf { it in SupportedExtensions }
+        ?: return explicitName ?: uriSegment
+
+    val baseName = explicitName
+        ?.substringBeforeLast('.', explicitName)
+        ?.takeIf { it.isNotBlank() }
+        ?: uriSegment
+            ?.substringBeforeLast('.', uriSegment)
+            ?.takeIf { it.isNotBlank() }
+        ?: "external-book"
+    return "$baseName.$extension"
+}
+
+private fun String?.toSupportedBookExtension(): String? =
+    when (this?.lowercase()) {
+        "application/pdf" -> "pdf"
+        "application/epub+zip" -> "epub"
+        "application/x-cbz", "application/vnd.comicbook+zip", "application/zip" -> "cbz"
+        "application/x-cbr", "application/vnd.comicbook-rar", "application/x-rar-compressed", "application/vnd.rar" -> "cbr"
+        "text/plain" -> "txt"
+        "text/markdown", "text/x-markdown" -> "md"
+        "application/octet-stream" -> null
+        else -> null
+    }
+
+private fun sniffZipBookExtension(
+    contentResolver: ContentResolver,
+    uri: Uri,
+    metadata: ExternalAndroidBookMetadata,
+): String? {
+    val explicitName = metadata.displayName.orEmpty().lowercase()
+    if (explicitName.endsWith(".epub")) return "epub"
+    if (explicitName.endsWith(".cbz")) return "cbz"
+
+    return runCatching {
+        contentResolver.openInputStream(uri)?.use { input ->
+            ZipInputStream(input.buffered()).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    val entryName = entry.name.orEmpty().lowercase()
+                    when {
+                        entryName == "mimetype" -> {
+                            val mimetype = zip.readBytes().decodeToString().trim().lowercase()
+                            if (mimetype == "application/epub+zip") return@use "epub"
+                        }
+                        entryName == "meta-inf/container.xml" -> return@use "epub"
+                        entryName.endsWith(".xhtml") || entryName.endsWith(".html") || entryName.endsWith(".htm") -> {
+                            if (entryName.contains("oebps") || entryName.contains("epub")) return@use "epub"
+                        }
+                        entryName.endsWith(".jpg") || entryName.endsWith(".jpeg") || entryName.endsWith(".png") || entryName.endsWith(".webp") -> {
+                            return@use "cbz"
+                        }
+                    }
+                    zip.closeEntry()
+                }
+                null
+            }
+        }
+    }.getOrNull()
+}
+
+private fun ByteArray.startsWithAscii(prefix: String): Boolean {
+    val prefixBytes = prefix.encodeToByteArray()
+    if (size < prefixBytes.size) return false
+    return prefixBytes.indices.all { index -> this[index] == prefixBytes[index] }
+}
+
+private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
+    if (size < prefix.size) return false
+    return prefix.indices.all { index -> this[index] == prefix[index] }
+}
+
+private fun ByteArray.looksLikeUtf8Text(): Boolean {
+    if (isEmpty()) return false
+    val sample = take(512)
+    val printableCount = sample.count { byte ->
+        val value = byte.toInt() and 0xFF
+        value == 0x09 || value == 0x0A || value == 0x0D || value in 0x20..0x7E || value >= 0x80
+    }
+    return printableCount >= (sample.size * 0.9)
+}
+
+private fun sniffExternalAndroidBookExtension(
+    contentResolver: ContentResolver,
+    uri: Uri,
+    metadata: ExternalAndroidBookMetadata,
+): String? {
+    return runCatching {
+        contentResolver.openInputStream(uri)?.use { input ->
+        val header = ByteArray(4096)
+        val read = input.read(header)
+        if (read <= 0) {
+            debugLog(ExternalIntentLogTag, "inspect:sniff emptyStream uri=$uri")
+            return@use null
+        }
+        val bytes = header.copyOf(read)
+        when {
+            bytes.startsWithAscii("%PDF-") -> "pdf"
+            bytes.startsWith(byteArrayOf(0x52, 0x61, 0x72, 0x21)) -> "cbr"
+            bytes.startsWith(byteArrayOf(0x50, 0x4B, 0x03, 0x04)) -> sniffZipBookExtension(contentResolver, uri, metadata)
+            bytes.looksLikeUtf8Text() -> metadata.mimeType.toSupportedBookExtension() ?: "txt"
+            else -> null
+        }
+        }
+    }.onFailure { error ->
+        debugLog(ExternalIntentLogTag, "inspect:sniff failed uri=$uri reason=${error.message}")
+    }.getOrNull()
+}
+
 private fun isTrashedDocumentName(name: String): Boolean {
     val normalized = name.trim().lowercase()
     return normalized.startsWith(".trashed")
@@ -699,6 +925,13 @@ private data class AndroidCbzScanResult(
     val title: String?,
     val author: String?,
     val pageCount: Int,
+)
+
+private data class ExternalAndroidBookMetadata(
+    val displayName: String?,
+    val sizeBytes: Long?,
+    val lastModifiedMillis: Long?,
+    val mimeType: String?,
 )
 
 private fun loadAndroidEpubIndex(

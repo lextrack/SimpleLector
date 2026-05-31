@@ -115,6 +115,7 @@ data class AppStrings(
     val noReadableCbzImages: String,
     val desktopChooseFolderTitle: String,
     val desktopScanApprove: String,
+    val temporaryBookBadge: String,
 )
 
 @Composable
@@ -128,6 +129,7 @@ fun appStrings(): AppStrings = appStringsForLanguage(currentLanguageTag())
 private fun appStringsForLanguage(languageTag: String): AppStrings =
     when {
         languageTag.startsWith("es", ignoreCase = true) -> spanishStrings()
+        languageTag.startsWith("fr", ignoreCase = true) -> frenchStrings()
         languageTag.startsWith("ja", ignoreCase = true) -> japaneseStrings()
         languageTag.startsWith("ko", ignoreCase = true) -> koreanStrings()
         isTraditionalChinese(languageTag) -> traditionalChineseStrings()
@@ -224,7 +226,7 @@ private fun spanishStrings(): AppStrings =
         resetAppDescription = "Borra las carpetas escaneadas, el progreso de lectura y el ultimo libro abierto.",
         resetAppButton = "Restablecer app",
         aboutTitle = "Acerca de",
-        developedBy = "Desarrollado por Lextrack Studios",
+        developedBy = "Desarrollado por Lex Studios",
         versionFormat = { version -> "Version $version" },
         githubRepository = "Repositorio en GitHub",
         resetAppConfirmTitle = "Restablecer app",
@@ -292,6 +294,141 @@ private fun spanishStrings(): AppStrings =
         noReadableCbzImages = "No se encontraron imagenes legibles en este CBZ.",
         desktopChooseFolderTitle = "Selecciona una carpeta para escanear libros",
         desktopScanApprove = "Escanear",
+        temporaryBookBadge = "Temporal",
+    )
+
+private fun frenchStrings(): AppStrings =
+    AppStrings(
+        appTitle = "Simple Lector",
+        loadingLibraryPleaseWait = "Chargement de la bibliotheque, veuillez patienter.",
+        sectionLibrary = "Bibliotheque",
+        sectionReader = "Lecteur",
+        sectionSettings = "Parametres",
+        themeLight = "Clair",
+        themeDark = "Sombre",
+        themeSepia = "Sepia",
+        themeDarkSepia = "Sepia sombre",
+        viewBooks = "Livres",
+        viewFolders = "Dossiers",
+        addFolder = "Ajouter un stockage/dossier",
+        back = "Retour",
+        close = "Fermer",
+        unknownAuthor = "Auteur inconnu",
+        unopened = "Non ouvert",
+        tapToRead = "Touchez pour lire",
+        searchLibraryLabel = "Rechercher par titre, auteur ou chemin",
+        libraryBrowseTitle = "Bibliotheque",
+        libraryViewLabel = "Contenu",
+        libraryPresentationLabel = "Disposition",
+        viewList = "Liste",
+        viewCarousel = "Carrousel",
+        noBooksInFolderWithFilters = "Il n'y a aucun livre dans ce dossier avec les filtres actuels.",
+        currentFolder = "Dossier actuel",
+        browsingFolders = "Navigation dans les dossiers",
+        foldersWord = "dossiers",
+        booksWord = "livres",
+        booksInCurrentFolder = "Livres dans ce dossier",
+        booksBelowHint = { count -> "$count livres plus bas" },
+        jumpToBooks = "Voir les livres",
+        loadingLibraryTitle = "Actualisation de la bibliotheque...",
+        loadingLibraryMessages = listOf(
+            "Verification des dossiers et mise a jour des livres enregistres.",
+            "Recherche des changements dans vos fichiers compatibles.",
+            "Preparation de la bibliotheque et des couvertures recentes.",
+            "Verification des sous-dossiers et des collections.",
+            "Organisation des titres, de la progression et des chemins de bibliotheque.",
+            "Synchronisation des couvertures pour afficher les resultats plus vite.",
+        ),
+        emptyLibraryTitle = "Votre bibliotheque est vide",
+        emptyLibraryMessage = "Ajoutez le stockage interne, une carte SD ou des dossiers. Les dossiers selectionnes ajouteront les fichiers compatibles a la bibliotheque.",
+        selectLocation = "Selectionner un emplacement",
+        libraryCountsFormat = { books, folders -> "$books livres dans $folders dossiers" },
+        folderStatsFormat = { folders, books -> "$folders dossiers · $books livres" },
+        settingsTitle = "Parametres",
+        settingsSubtitle = "Dossiers, lecture et comportement",
+        libraryStatusTitle = "Etat de la bibliotheque",
+        randomBook = "Livre aleatoire",
+        readingThemeTitle = "Theme de lecture",
+        readingControlsTitle = "Commandes de lecture",
+        showPageCounter = "Afficher le compteur de pages",
+        showPageButtons = "Afficher les boutons de page",
+        keepScreenOn = "Garder l'ecran allume",
+        lockRotationInReader = "Verrouiller la rotation pendant la lecture",
+        textSizeFormat = { value -> "Taille du texte : ${value}sp" },
+        extraLineHeightFormat = { value -> "Interligne supplementaire : ${value}sp" },
+        sideMarginFormat = { value -> "Marge laterale : ${value}dp" },
+        scannedFoldersTitle = "Dossiers analyses",
+        noFoldersAdded = "Aucun dossier n'a encore ete ajoute.",
+        remove = "Retirer",
+        appDataTitle = "Donnees de l'application",
+        resetAppDescription = "Efface les dossiers analyses, la progression de lecture et le dernier livre ouvert.",
+        resetAppButton = "Reinitialiser l'application",
+        aboutTitle = "A propos",
+        developedBy = "Developpe par Lex Studios",
+        versionFormat = { version -> "Version $version" },
+        githubRepository = "Depot GitHub",
+        resetAppConfirmTitle = "Reinitialiser l'application",
+        resetAppConfirmMessage = "Les dossiers analyses, la progression de lecture et le dernier livre ouvert seront supprimes. Voulez-vous continuer ?",
+        resetAppConfirmButton = "Oui, supprimer",
+        cancel = "Annuler",
+        failedImportFolder = "Le dossier selectionne n'a pas pu etre importe. Veuillez reessayer.",
+        removedInaccessibleFolder = { count ->
+            if (count == 1) "1 dossier a ete retire car il n'est plus disponible."
+            else "$count dossiers ont ete retires car ils ne sont plus disponibles."
+        },
+        preservedFailedFolder = { count ->
+            if (count == 1) "1 dossier a eu une erreur d'analyse. Ses donnees precedentes ont ete conservees."
+            else "$count dossiers ont eu des erreurs d'analyse. Leurs donnees precedentes ont ete conservees."
+        },
+        removedAndPreservedFolders = { inaccessible, failed ->
+            buildString {
+                append(if (inaccessible == 1) "1 dossier inaccessible a ete retire. " else "$inaccessible dossiers inaccessibles ont ete retires. ")
+                append(if (failed == 1) "1 dossier a conserve ses donnees precedentes a cause d'une erreur d'analyse." else "$failed dossiers ont conserve leurs donnees precedentes a cause d'erreurs d'analyse.")
+            }
+        },
+        openBookFailed = "Le livre n'a pas pu etre ouvert.",
+        unsupportedFormatReader = "Ce format n'a pas encore de lecteur reel connecte.",
+        unsupportedCbrRar5Message = "Ce fichier CBR utilise RAR5 et n'est pas encore pris en charge. Essayez de le convertir en CBZ ou en RAR4.",
+        bookmarkRemoved = { page -> "Marque-page retire de la page $page" },
+        bookmarkAdded = { page -> "Marque-page ajoute a la page $page" },
+        pdfZoom = "Zoom",
+        cbzZoom = "Zoom",
+        cbrZoom = "Zoom",
+        readingProgressFormat = { page, total, percent -> "Page $page sur $total · $percent%" },
+        chaptersTitle = "Chapitres",
+        bookmarksTitle = "Marque-pages",
+        searchTitle = "Recherche",
+        jumpToPage = "Aller a la page",
+        go = "Aller",
+        previous = "Precedent",
+        next = "Suivant",
+        hide = "Masquer",
+        index = "Index",
+        search = "Rechercher",
+        bookmarks = "Marque-pages",
+        bookmarked = "Marque",
+        bookmark = "Marquer",
+        noNavigableChapters = "Ce livre n'expose pas de chapitres navigables.",
+        noBookmarksYet = "Il n'y a pas encore de marque-pages pour ce livre.",
+        searchInBook = "Rechercher dans le livre",
+        searchHint = "Saisissez un mot ou une phrase a rechercher.",
+        noSearchResults = "Aucun resultat trouve.",
+        searchResultFormat = { page, preview -> "P. $page : $preview" },
+        noBookOpen = "Aucun livre ouvert",
+        goToLibrary = "Aller a la bibliotheque",
+        bookUnavailable = "Livre indisponible",
+        chooseAnotherBook = "Vous pouvez retourner a la bibliotheque et choisir un autre livre disponible.",
+        backToLibrary = "Retour a la bibliotheque",
+        openingFormat = { format -> "Ouverture de ${format.uppercase()}..." },
+        missingBookMessage = "Le fichier a ete supprime ou deplace. Selectionnez-en un autre pour lire.",
+        bookmarkLabelFormat = { chapter, title, page -> if (chapter != null) "$chapter · Page $page" else "$title · Page $page" },
+        rootFoldersTitle = "Dossiers",
+        codeLanguagePrefix = "Code :",
+        noReadableTextMessage = "Aucun texte lisible n'a ete trouve dans ce fichier.",
+        noReadableCbzImages = "Aucune image lisible n'a ete trouvee dans ce CBZ.",
+        desktopChooseFolderTitle = "Selectionnez un dossier a analyser pour les livres",
+        desktopScanApprove = "Analyser",
+        temporaryBookBadge = "Temporaire",
     )
 
 private fun englishStrings(): AppStrings =
@@ -361,7 +498,7 @@ private fun englishStrings(): AppStrings =
         resetAppDescription = "Clears scanned folders, reading progress, and the last opened book.",
         resetAppButton = "Reset app",
         aboutTitle = "About",
-        developedBy = "Developed by Lextrack Studios",
+        developedBy = "Developed by Lex Studios",
         versionFormat = { version -> "Version $version" },
         githubRepository = "GitHub repository",
         resetAppConfirmTitle = "Reset app",
@@ -425,6 +562,7 @@ private fun englishStrings(): AppStrings =
         noReadableCbzImages = "No readable images were found in this CBZ.",
         desktopChooseFolderTitle = "Select a folder to scan for books",
         desktopScanApprove = "Scan",
+        temporaryBookBadge = "Temporary",
     )
 
 private fun japaneseStrings(): AppStrings =
@@ -494,7 +632,7 @@ private fun japaneseStrings(): AppStrings =
         resetAppDescription = "スキャン済みフォルダー、読書進捗、最後に開いた本を削除します。",
         resetAppButton = "アプリをリセット",
         aboutTitle = "このアプリについて",
-        developedBy = "Lextrack Studios 開発",
+        developedBy = "Lex Studios 開発",
         versionFormat = { version -> "バージョン $version" },
         githubRepository = "GitHub リポジトリ",
         resetAppConfirmTitle = "アプリをリセット",
@@ -558,6 +696,7 @@ private fun japaneseStrings(): AppStrings =
         noReadableCbzImages = "この CBZ には読み取れる画像が見つかりませんでした。",
         desktopChooseFolderTitle = "本をスキャンするフォルダーを選択",
         desktopScanApprove = "スキャン",
+        temporaryBookBadge = "一時",
     )
 
 private fun koreanStrings(): AppStrings =
@@ -627,7 +766,7 @@ private fun koreanStrings(): AppStrings =
         resetAppDescription = "스캔한 폴더, 읽기 진행 상황, 마지막으로 연 책을 지웁니다.",
         resetAppButton = "앱 초기화",
         aboutTitle = "정보",
-        developedBy = "개발: Lextrack Studios",
+        developedBy = "개발: Lex Studios",
         versionFormat = { version -> "버전 $version" },
         githubRepository = "GitHub 저장소",
         resetAppConfirmTitle = "앱 초기화",
@@ -691,6 +830,7 @@ private fun koreanStrings(): AppStrings =
         noReadableCbzImages = "이 CBZ에서 읽을 수 있는 이미지를 찾지 못했습니다.",
         desktopChooseFolderTitle = "책을 스캔할 폴더를 선택하세요",
         desktopScanApprove = "스캔",
+        temporaryBookBadge = "임시",
     )
 
 private fun simplifiedChineseStrings(): AppStrings =
@@ -760,7 +900,7 @@ private fun simplifiedChineseStrings(): AppStrings =
         resetAppDescription = "清除已扫描文件夹、阅读进度和上次打开的书籍。",
         resetAppButton = "重置应用",
         aboutTitle = "关于",
-        developedBy = "由 Lextrack Studios 开发",
+        developedBy = "由 Lex Studios 开发",
         versionFormat = { version -> "版本 $version" },
         githubRepository = "GitHub 仓库",
         resetAppConfirmTitle = "重置应用",
@@ -824,6 +964,7 @@ private fun simplifiedChineseStrings(): AppStrings =
         noReadableCbzImages = "此 CBZ 中未找到可显示的图片。",
         desktopChooseFolderTitle = "选择要扫描书籍的文件夹",
         desktopScanApprove = "扫描",
+        temporaryBookBadge = "临时",
     )
 
 private fun traditionalChineseStrings(): AppStrings =
@@ -893,7 +1034,7 @@ private fun traditionalChineseStrings(): AppStrings =
         resetAppDescription = "清除已掃描資料夾、閱讀進度與上次開啟的書籍。",
         resetAppButton = "重設應用程式",
         aboutTitle = "關於",
-        developedBy = "由 Lextrack Studios 開發",
+        developedBy = "由 Lex Studios 開發",
         versionFormat = { version -> "版本 $version" },
         githubRepository = "GitHub 儲存庫",
         resetAppConfirmTitle = "重設應用程式",
@@ -957,6 +1098,7 @@ private fun traditionalChineseStrings(): AppStrings =
         noReadableCbzImages = "此 CBZ 中找不到可顯示的影像。",
         desktopChooseFolderTitle = "選擇要掃描書籍的資料夾",
         desktopScanApprove = "掃描",
+        temporaryBookBadge = "臨時",
     )
 
 fun AppSection.localizedLabel(strings: AppStrings): String = when (this) {

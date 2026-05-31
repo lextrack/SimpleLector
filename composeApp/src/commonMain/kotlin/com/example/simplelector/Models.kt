@@ -1,5 +1,7 @@
 package com.example.simplelector
 
+const val ExternalTemporaryFolderPath = "__simplelector_external__"
+
 val SupportedExtensions: Set<String>
     get() = supportedBookFormats()
 
@@ -18,6 +20,8 @@ data class Book(
     val progressPage: Int = 1,
     val hasRealPageCount: Boolean = false,
 )
+
+fun Book.isTemporaryBook(): Boolean = folder == ExternalTemporaryFolderPath
 
 data class ScannedFolder(
     val label: String,

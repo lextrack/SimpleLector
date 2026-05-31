@@ -184,7 +184,11 @@ class SimpleLectorState {
             val currentPath = normalizedLibraryFolderPath()
             val filtered = filteredBooks
             val snapshot = buildLibraryFolderSnapshot(currentPath, filtered)
-            val title = currentPath?.friendlyFolderName() ?: appStrings().rootFoldersTitle
+            val title = when (currentPath) {
+                null -> appStrings().rootFoldersTitle
+                ExternalTemporaryFolderPath -> appStrings().temporaryBookBadge
+                else -> currentPath.friendlyFolderName()
+            }
             return LibraryFolderView(
                 currentPath = currentPath,
                 title = title,
@@ -249,7 +253,7 @@ class SimpleLectorState {
                 readerDocuments.remove(hadSelectedBook)
                 readerError = appStrings().missingBookMessage
             } else if (selectedBookId != null) {
-                selectedBookId = books.firstOrNull()?.id
+                selectedBookId = null
             }
             notifyLastOpenedBookChanged()
         }
@@ -267,7 +271,7 @@ class SimpleLectorState {
             if (section == AppSection.Reader) {
                 readerError = appStrings().missingBookMessage
             } else {
-                selectedBookId = books.firstOrNull()?.id
+                selectedBookId = null
             }
         }
         onFoldersChanged?.invoke(folders.toList())
@@ -319,10 +323,6 @@ class SimpleLectorState {
         trimUnavailableCachedData()
         invalidateLibraryCaches()
         normalizeCurrentLibraryFolderPath()
-
-        if (selectedBookId == null) {
-            selectedBookId = books.firstOrNull()?.id
-        }
     }
 
     fun openBook(book: Book) {
@@ -342,6 +342,35 @@ class SimpleLectorState {
         readerHudVisible = true
         readerError = null
         notifyLastOpenedBookChanged()
+    }
+
+    fun openExternalBook(book: Book) {
+        val existingLibraryBook = books.firstOrNull { candidate ->
+            !candidate.isTemporaryBook() && candidate.matchesExternalBook(book)
+        }
+        if (existingLibraryBook != null) {
+            books.removeAll { candidate ->
+                candidate.isTemporaryBook() && candidate.matchesExternalBook(book)
+            }
+            openBook(existingLibraryBook)
+            return
+        }
+
+        val previous = books.firstOrNull { it.id == book.id || it.signature == book.signature }
+        val mergedBook = if (previous != null) {
+            book.copy(
+                totalPages = if (previous.hasRealPageCount) previous.totalPages else book.totalPages,
+                progressPage = previous.progressPage.coerceIn(1, maxOf(previous.totalPages, book.totalPages)),
+                hasRealPageCount = previous.hasRealPageCount,
+            )
+        } else {
+            book
+        }
+
+        books.removeAll { it.folder == ExternalTemporaryFolderPath || it.id == mergedBook.id }
+        books.add(0, mergedBook.copy(folder = ExternalTemporaryFolderPath))
+        openBook(books.first())
+        notifyProgressChanged()
     }
 
     fun navigateBack(): Boolean {
@@ -509,9 +538,7 @@ class SimpleLectorState {
         trimUnavailableCachedData()
         normalizeCurrentLibraryFolderPath()
         if (selectedBookId != null && books.none { it.id == selectedBookId }) {
-            selectedBookId = books.firstOrNull()?.id
-        } else if (selectedBookId == null) {
-            selectedBookId = books.firstOrNull()?.id
+            selectedBookId = null
         }
         invalidateLibraryCaches()
     }
@@ -609,8 +636,23 @@ class SimpleLectorState {
         currentPath: String?,
         filtered: List<Book>,
     ): LibraryFolderSnapshot {
+        val temporaryBooks = filtered
+            .filter(Book::isTemporaryBook)
+            .sortedBy { it.sortKey }
+
         if (currentPath == null) {
-            val childFolders = folders
+            val childFolders = buildList {
+                if (temporaryBooks.isNotEmpty()) {
+                    add(
+                        LibraryFolderNode(
+                            path = ExternalTemporaryFolderPath,
+                            label = appStrings().temporaryBookBadge,
+                            bookCount = temporaryBooks.size,
+                        ),
+                    )
+                }
+                addAll(
+                    folders
                 .mapNotNull { folder ->
                     val count = filtered.count { book ->
                         book.path.isInsideFolder(folder.browsePath)
@@ -625,6 +667,8 @@ class SimpleLectorState {
                         )
                     }
                 }
+                )
+            }
                 .sortedBy { it.label.lowercase() }
             return LibraryFolderSnapshot(
                 childFolders = childFolders,
@@ -632,9 +676,17 @@ class SimpleLectorState {
             )
         }
 
+        if (currentPath == ExternalTemporaryFolderPath) {
+            return LibraryFolderSnapshot(
+                childFolders = emptyList(),
+                books = temporaryBooks,
+            )
+        }
+
         val directBooks = mutableListOf<Book>()
         val childFolderCounts = linkedMapOf<String, Int>()
         filtered.forEach { book ->
+            if (book.isTemporaryBook()) return@forEach
             if (book.parentFolderPath() == currentPath) {
                 directBooks += book
             }
@@ -660,6 +712,9 @@ class SimpleLectorState {
 
     private fun normalizedLibraryFolderPath(path: String? = currentLibraryFolderPath): String? {
         val candidate = path ?: return null
+        if (candidate == ExternalTemporaryFolderPath) {
+            return candidate.takeIf { filteredBooks.any(Book::isTemporaryBook) }
+        }
         val isInsideKnownBrowseRoot = folders.any { folder ->
             candidate == folder.browsePath || candidate.isSameOrDescendantFolder(folder.browsePath)
         }
@@ -687,4 +742,24 @@ class SimpleLectorState {
         val childFolders: List<LibraryFolderNode>,
         val books: List<Book>,
     )
+}
+
+private fun Book.matchesExternalBook(other: Book): Boolean {
+    if (id == other.id || signature == other.signature) return true
+    if (!format.equals(other.format, ignoreCase = true)) return false
+
+    val sameSize = fileSizeBytes != null && other.fileSizeBytes != null && fileSizeBytes == other.fileSizeBytes
+    val sameTitle = normalizeBookSearchToken(title) == normalizeBookSearchToken(other.title)
+    val sameAuthor = normalizeBookSearchToken(author.orEmpty()) == normalizeBookSearchToken(other.author.orEmpty())
+    val samePathName = path.substringAfterLast('/').substringAfterLast('\\')
+        .equals(
+            other.path.substringAfterLast('/').substringAfterLast('\\'),
+            ignoreCase = true,
+        )
+
+    return when {
+        sameSize && sameTitle && (sameAuthor || author.isNullOrBlank() || other.author.isNullOrBlank()) -> true
+        samePathName && sameSize -> true
+        else -> false
+    }
 }

@@ -65,13 +65,13 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Deb)
             packageName = "SimpleLector"
-            packageVersion = "1.0.5"
+            packageVersion = "1.0.6"
             description = "Lector de libros SimpleLector"
-            vendor = "Lextrack Studios"
+            vendor = "Lex Studios"
 
             windows {
                 iconFile.set(rootProject.file("desktop-assets/icon.ico"))
-                menuGroup = "Lextrack Studios"
+                menuGroup = "Lex Studios"
                 shortcut = true
                 perUserInstall = true
             }

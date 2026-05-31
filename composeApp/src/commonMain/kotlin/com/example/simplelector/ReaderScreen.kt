@@ -247,7 +247,21 @@ fun ReaderScreen(
                     },
                 )
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(activeBook.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            activeBook.title,
+                            modifier = Modifier.weight(1f),
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (activeBook.isTemporaryBook()) {
+                            TemporaryBookBadge(compact = true)
+                        }
+                    }
                     Text(activeBook.format.uppercase(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 ReaderTopBarBookmarkButton(
