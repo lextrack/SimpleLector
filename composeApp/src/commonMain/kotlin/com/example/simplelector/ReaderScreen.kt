@@ -467,21 +467,21 @@ fun ReaderScreen(
         activeNote?.let { link ->
             AlertDialog(
                 onDismissRequest = { activeNote = null },
-                title = { Text("Nota") },
-                text = { Text(readerDocument.noteTextFor(link) ?: "No se pudo encontrar el texto de esta nota.") },
+                title = { Text(strings.noteTitle) },
+                text = { Text(readerDocument.noteTextFor(link) ?: strings.noteNotFound) },
                 confirmButton = {
-                    link.navigationPage?.let { page -> TextButton(onClick = { activeNote = null; state.updateProgress(page) }) { Text("Ir a la nota") } }
+                    link.navigationPage?.let { page -> TextButton(onClick = { activeNote = null; state.updateProgress(page) }) { Text(strings.goToNote) } }
                 },
-                dismissButton = { TextButton(onClick = { activeNote = null }) { Text("Cerrar") } },
+                dismissButton = { TextButton(onClick = { activeNote = null }) { Text(strings.close) } },
             )
         }
         externalLink?.let { url ->
             AlertDialog(
                 onDismissRequest = { externalLink = null },
-                title = { Text("Abrir enlace externo") },
+                title = { Text(strings.externalLinkTitle) },
                 text = { Text(url) },
-                confirmButton = { TextButton(onClick = { runCatching { uriHandler.openUri(url) }; externalLink = null }) { Text("Abrir") } },
-                dismissButton = { TextButton(onClick = { externalLink = null }) { Text("Cancelar") } },
+                confirmButton = { TextButton(onClick = { runCatching { uriHandler.openUri(url) }; externalLink = null }) { Text(strings.openExternalLink) } },
+                dismissButton = { TextButton(onClick = { externalLink = null }) { Text(strings.cancel) } },
             )
         }
 

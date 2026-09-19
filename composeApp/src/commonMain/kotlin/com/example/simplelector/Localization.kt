@@ -116,6 +116,11 @@ data class AppStrings(
     val desktopChooseFolderTitle: String,
     val desktopScanApprove: String,
     val temporaryBookBadge: String,
+    val noteTitle: String,
+    val goToNote: String,
+    val noteNotFound: String,
+    val externalLinkTitle: String,
+    val openExternalLink: String,
 )
 
 @Composable
@@ -295,6 +300,11 @@ private fun spanishStrings(): AppStrings =
         desktopChooseFolderTitle = "Selecciona una carpeta para escanear libros",
         desktopScanApprove = "Escanear",
         temporaryBookBadge = "Temporal",
+        noteTitle = "Nota",
+        goToNote = "Ir a la nota",
+        noteNotFound = "No se pudo encontrar el texto de esta nota.",
+        externalLinkTitle = "Abrir enlace externo",
+        openExternalLink = "Abrir",
     )
 
 private fun frenchStrings(): AppStrings =
@@ -429,6 +439,11 @@ private fun frenchStrings(): AppStrings =
         desktopChooseFolderTitle = "Selectionnez un dossier a analyser pour les livres",
         desktopScanApprove = "Analyser",
         temporaryBookBadge = "Temporaire",
+        noteTitle = "Note",
+        goToNote = "Aller à la note",
+        noteNotFound = "Le texte de cette note est introuvable.",
+        externalLinkTitle = "Ouvrir le lien externe",
+        openExternalLink = "Ouvrir",
     )
 
 private fun englishStrings(): AppStrings =
@@ -563,6 +578,11 @@ private fun englishStrings(): AppStrings =
         desktopChooseFolderTitle = "Select a folder to scan for books",
         desktopScanApprove = "Scan",
         temporaryBookBadge = "Temporary",
+        noteTitle = "Note",
+        goToNote = "Go to note",
+        noteNotFound = "The text for this note could not be found.",
+        externalLinkTitle = "Open external link",
+        openExternalLink = "Open",
     )
 
 private fun japaneseStrings(): AppStrings =
@@ -697,6 +717,11 @@ private fun japaneseStrings(): AppStrings =
         desktopChooseFolderTitle = "本をスキャンするフォルダーを選択",
         desktopScanApprove = "スキャン",
         temporaryBookBadge = "一時",
+        noteTitle = "注記",
+        goToNote = "注記へ移動",
+        noteNotFound = "この注記の本文が見つかりませんでした。",
+        externalLinkTitle = "外部リンクを開く",
+        openExternalLink = "開く",
     )
 
 private fun koreanStrings(): AppStrings =
@@ -831,6 +856,11 @@ private fun koreanStrings(): AppStrings =
         desktopChooseFolderTitle = "책을 스캔할 폴더를 선택하세요",
         desktopScanApprove = "스캔",
         temporaryBookBadge = "임시",
+        noteTitle = "주석",
+        goToNote = "주석으로 이동",
+        noteNotFound = "이 주석의 내용을 찾을 수 없습니다.",
+        externalLinkTitle = "외부 링크 열기",
+        openExternalLink = "열기",
     )
 
 private fun simplifiedChineseStrings(): AppStrings =
@@ -965,6 +995,11 @@ private fun simplifiedChineseStrings(): AppStrings =
         desktopChooseFolderTitle = "选择要扫描书籍的文件夹",
         desktopScanApprove = "扫描",
         temporaryBookBadge = "临时",
+        noteTitle = "注释",
+        goToNote = "前往注释",
+        noteNotFound = "找不到此注释的文本。",
+        externalLinkTitle = "打开外部链接",
+        openExternalLink = "打开",
     )
 
 private fun traditionalChineseStrings(): AppStrings =
@@ -1099,6 +1134,11 @@ private fun traditionalChineseStrings(): AppStrings =
         desktopChooseFolderTitle = "選擇要掃描書籍的資料夾",
         desktopScanApprove = "掃描",
         temporaryBookBadge = "臨時",
+        noteTitle = "註解",
+        goToNote = "前往註解",
+        noteNotFound = "找不到此註解的文字。",
+        externalLinkTitle = "開啟外部連結",
+        openExternalLink = "開啟",
     )
 
 fun AppSection.localizedLabel(strings: AppStrings): String = when (this) {
