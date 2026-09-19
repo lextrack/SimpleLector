@@ -35,6 +35,9 @@ class SimpleLectorState {
     var libraryAnimationCycle by mutableIntStateOf(0)
     var libraryNotice by mutableStateOf<LibraryNotice?>(null)
     var loadingReaderBookId by mutableStateOf<String?>(null)
+        private set
+    var readerLoadRevision by mutableIntStateOf(0)
+        private set
     var readerError by mutableStateOf<String?>(null)
     var readerHudVisible by mutableStateOf(true)
     private var sectionState by mutableStateOf(AppSection.Library)
@@ -418,6 +421,19 @@ class SimpleLectorState {
         }
     }
 
+    /** Starts one reader load at a time; completion advances the retry revision. */
+    fun beginReaderLoad(bookId: String): Boolean {
+        if (loadingReaderBookId != null) return false
+        loadingReaderBookId = bookId
+        return true
+    }
+
+    fun finishReaderLoad(bookId: String) {
+        if (loadingReaderBookId != bookId) return
+        loadingReaderBookId = null
+        readerLoadRevision += 1
+    }
+
     fun updateLoadedBook(bookId: String, totalPages: Int) {
         val index = books.indexOfFirst { it.id == bookId }
         if (index >= 0) {
@@ -575,6 +591,7 @@ class SimpleLectorState {
         libraryListPositions.clear()
         isRefreshing = false
         loadingReaderBookId = null
+        readerLoadRevision += 1
         libraryNotice = null
         readerError = null
         readerHudVisible = true

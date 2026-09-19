@@ -141,26 +141,23 @@ fun ReaderScreen(
     }
     val readerDocument = state.readerDocuments[book.id]
 
-    LaunchedEffect(book.id, onLoadBook) {
-        if (readerDocument == null && onLoadBook != null && state.loadingReaderBookId != book.id) {
-            state.loadingReaderBookId = book.id
+    LaunchedEffect(book.id, onLoadBook, state.readerLoadRevision) {
+        if (readerDocument == null && onLoadBook != null && state.readerError == null && state.beginReaderLoad(book.id)) {
             state.readerError = null
             try {
                 val loaded = onLoadBook(book)
                 if (loaded != null) {
                     state.setLoadedDocument(book.id, loaded)
                     state.updateLoadedBook(book.id, loaded.totalPages)
-                } else if (state.readerError == null && !book.hasConnectedReader()) {
-                    state.readerError = strings.unsupportedFormatReader
+                } else if (state.readerError == null) {
+                    state.readerError = if (book.hasConnectedReader()) strings.openBookFailed else strings.unsupportedFormatReader
                 }
             } catch (_: CancellationException) {
                 // Leaving the reader tab cancels this effect; that is expected and should not surface as a reader error.
             } catch (error: Throwable) {
                 state.readerError = error.message ?: strings.openBookFailed
             } finally {
-                if (state.loadingReaderBookId == book.id) {
-                    state.loadingReaderBookId = null
-                }
+                state.finishReaderLoad(book.id)
             }
         }
     }

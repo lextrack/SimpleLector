@@ -135,6 +135,19 @@ class SimpleLectorStateTest {
     }
 
     @Test
+    fun readerLoadCompletionAdvancesRevisionSoInterruptedLoadsCanRetry() {
+        val state = SimpleLectorState()
+
+        assertTrue(state.beginReaderLoad("book"))
+        assertFalse(state.beginReaderLoad("book"))
+        state.finishReaderLoad("book")
+
+        assertNull(state.loadingReaderBookId)
+        assertEquals(1, state.readerLoadRevision)
+        assertTrue(state.beginReaderLoad("book"))
+    }
+
+    @Test
     fun libraryListPosition_isStoredAndClearedWithAppData() {
         val state = SimpleLectorState()
 
