@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.verticalScroll
@@ -803,9 +804,15 @@ private fun ReaderChaptersList(
         Text(strings.noNavigableChapters, color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         items(chapters, key = { "${it.page}-${it.title}" }) { chapter ->
-            TextButton(onClick = { onGoToPage(chapter.page) }) {
+            TextButton(
+                onClick = { onGoToPage(chapter.page) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 Text(
                     text = if (chapter.page == currentPage) "• ${chapter.title}" else chapter.title,
                     maxLines = 2,

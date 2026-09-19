@@ -595,10 +595,7 @@ internal fun parseNavigationEntries(
 
     val navDocumentPaths = buildList {
         manifest.values
-            .filter { item ->
-                "nav" in item.properties.lowercase() ||
-                    item.mediaType == "application/xhtml+xml"
-            }
+            .filter { item -> "nav" in item.properties.lowercase() }
             .forEach { add(it.href) }
         manifest.values
             .firstOrNull { it.mediaType == "application/x-dtbncx+xml" }
@@ -619,7 +616,7 @@ internal fun parseNavigationEntries(
                 }
             }
         } else {
-            extractHtmlNavigationTitles(text).forEach { (href, title) ->
+            extractHtmlTocNavigationTitles(text).forEach { (href, title) ->
                 val resolved = normalizeResolvedNavigationTarget(
                     resolveArchivePath(path.substringBeforeLast('/', ""), href),
                 )
@@ -792,6 +789,23 @@ private fun extractHtmlNavigationTitles(html: String): Map<String, String> =
             href to title
         }
         .toMap(linkedMapOf())
+
+/** Only the table-of-contents nav belongs in the reader's chapter index. */
+private fun extractHtmlTocNavigationTitles(html: String): Map<String, String> {
+    val entries = linkedMapOf<String, String>()
+    Regex("""<nav\b([^>]*)>(.*?)</nav>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        .findAll(html)
+        .filter { match ->
+            val attributes = match.groupValues[1].lowercase()
+            "toc" in attributes || "doc-toc" in attributes
+        }
+        .forEach { nav ->
+            extractHtmlNavigationTitles(nav.groupValues[2]).forEach { (href, title) ->
+                entries.putIfAbsent(href, title)
+            }
+        }
+    return entries
+}
 
 private fun extractNcxNavigationTitles(xml: String): Map<String, String> {
     val entries = linkedMapOf<String, String>()

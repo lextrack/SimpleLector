@@ -237,6 +237,31 @@ class BookParsingTest {
     }
 
     @Test
+    fun parseEpub_indexUsesOnlyTocEntriesNotLinksFromBookText() {
+        val epub = parseEpub(
+            mapOf(
+                "META-INF/container.xml" to "<container><rootfile full-path=\"book.opf\" /></container>".encodeToByteArray(),
+                "book.opf" to """
+                    <package><manifest>
+                      <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                      <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml" />
+                    </manifest><spine><itemref idref="chapter" /></spine></package>
+                """.trimIndent().encodeToByteArray(),
+                "nav.xhtml" to """
+                    <nav epub:type="toc"><ol><li><a href="chapter.xhtml#start">Capítulo uno</a></li></ol></nav>
+                    <nav epub:type="page-list"><ol><li><a href="chapter.xhtml#p1">1</a></li></ol></nav>
+                """.trimIndent().encodeToByteArray(),
+                "chapter.xhtml" to """
+                    <p id="start">Texto<a epub:type="noteref" href="#n1">1</a>.</p>
+                    <aside id="n1"><p>Nota</p></aside>
+                """.trimIndent().encodeToByteArray(),
+            ),
+        )
+
+        assertEquals(listOf(EpubNavigationEntry("chapter.xhtml#start", "Capítulo uno")), epub.navigationEntries)
+    }
+
+    @Test
     fun htmlToReaderBlocks_preservesMultipleInlineLinksAndNoteSemantics() {
         val block = htmlToReaderBlocks(
             "<p>Texto<a epub:type=\"noteref\" href=\"#n1\">1</a> y <a href=\"chapter.xhtml#x\">ver</a>.</p>",
