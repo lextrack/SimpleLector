@@ -95,7 +95,7 @@ fun parseEpub(entries: Map<String, ByteArray>): ParsedEpub {
                 else -> block.text.isNotBlank()
             }
         }.map { block ->
-            if (block.navigationHref != null) {
+            if (block.navigationHref != null || block.inlineLinks.isNotEmpty()) {
                 block.copy(navigationBasePath = path)
             } else {
                 block
@@ -285,20 +285,24 @@ fun buildReaderDocumentFromSectionSources(
         section.blocks.forEach { block ->
             chunkReaderContentBlock(block).forEach { chunk ->
                 val targetPage = (pages.size + 1).coerceAtLeast(1)
-                if (chunk.anchorId != null && section.path != null) {
-                    anchorPages.putIfAbsent(
-                        normalizeResolvedNavigationTarget(section.path, chunk.anchorId),
-                        targetPage,
-                    )
+                if (section.path != null) {
+                    chunk.allAnchorIds().forEach { anchorId ->
+                        anchorPages.putIfAbsent(
+                            normalizeResolvedNavigationTarget(section.path, anchorId),
+                            targetPage,
+                        )
+                    }
                 }
                 val blockWeight = readerBlockWeight(chunk)
                 if (currentBlocks.isNotEmpty() && currentWeight + blockWeight > pageWeightLimit) {
                     pages += buildReaderPage(currentBlocks)
                     currentBlocks = mutableListOf()
                     currentWeight = 0
-                    if (chunk.anchorId != null && section.path != null) {
-                        anchorPages[normalizeResolvedNavigationTarget(section.path, chunk.anchorId)] =
-                            (pages.size + 1).coerceAtLeast(1)
+                    if (section.path != null) {
+                        chunk.allAnchorIds().forEach { anchorId ->
+                            anchorPages[normalizeResolvedNavigationTarget(section.path, anchorId)] =
+                                (pages.size + 1).coerceAtLeast(1)
+                        }
                     }
                 }
                 currentBlocks += chunk
@@ -321,7 +325,7 @@ fun buildReaderDocumentFromSectionSources(
                     val page = if (link.kind == ReaderLinkKind.External) null else resolveEpubNavigationPage(link.href, block, sectionStartPages, anchorPages)
                     link.copy(
                         navigationPage = page,
-                        targetAnchorId = link.href.substringAfter('#', "").takeIf { it.isNotBlank() },
+                        targetAnchorId = normalizeEpubAnchorId(link.href.substringAfter('#', "")),
                     )
                 }
                 if (targetPage != null) {
@@ -385,17 +389,34 @@ private fun chunkReaderContentBlock(block: ReaderContentBlock): List<ReaderConte
     if (block.text.length <= limit) return listOf(block)
 
     val chunks = mutableListOf<ReaderContentBlock>()
-    var remaining = block.text
-    while (remaining.length > limit) {
-        val splitIndex = remaining.lastIndexOf(' ', startIndex = limit).takeIf { it > limit / 2 } ?: limit
-        val chunk = remaining.substring(0, splitIndex).trim()
-        if (chunk.isNotBlank()) {
-            chunks += block.copy(text = chunk)
+    var cursor = 0
+    while (cursor < block.text.length) {
+        val proposedEnd = (cursor + limit).coerceAtMost(block.text.length)
+        val end = if (proposedEnd < block.text.length) {
+            block.text.lastIndexOf(' ', startIndex = proposedEnd).takeIf { it > cursor + limit / 2 } ?: proposedEnd
+        } else {
+            proposedEnd
         }
-        remaining = remaining.substring(splitIndex).trim()
-    }
-    if (remaining.isNotBlank()) {
-        chunks += block.copy(text = remaining)
+        val start = cursor
+        val chunkText = block.text.substring(start, end).trim()
+        val trimmedStart = start + block.text.substring(start, end).indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
+        if (chunkText.isNotBlank()) {
+            val trimmedEnd = trimmedStart + chunkText.length
+            chunks += block.copy(
+                text = chunkText,
+                anchorId = if (chunks.isEmpty()) block.anchorId else null,
+                anchorIds = if (chunks.isEmpty()) block.anchorIds else emptyList(),
+                inlineLinks = block.inlineLinks.mapNotNull { link ->
+                    if (link.start >= trimmedStart && link.end <= trimmedEnd) {
+                        link.copy(start = link.start - trimmedStart, end = link.end - trimmedStart)
+                    } else {
+                        null
+                    }
+                },
+            )
+        }
+        cursor = end
+        while (cursor < block.text.length && block.text[cursor].isWhitespace()) cursor += 1
     }
     return chunks
 }
@@ -498,6 +519,9 @@ private fun resolveEpubNavigationPage(
     }
     return resolveNormalizedNavigationPage(resolvedHref, sectionStartPages, anchorPages)
 }
+
+private fun ReaderContentBlock.allAnchorIds(): List<String> =
+    (anchorIds + listOfNotNull(anchorId)).distinct()
 
 private fun String.normalizedDuplicateKey(): String =
     lowercase()
@@ -694,12 +718,7 @@ internal fun resolveArchivePath(basePath: String, relativePath: String): String 
 
 private fun normalizeResolvedNavigationTarget(path: String, anchorId: String? = null): String {
     val normalizedPath = normalizeArchivePath(path.substringBefore('#').substringBefore('?'))
-    val normalizedAnchor = anchorId
-        ?.trim()
-        ?.removePrefix("#")
-        ?.substringBefore('?')
-        ?.lowercase()
-        ?.takeIf { it.isNotBlank() }
+    val normalizedAnchor = normalizeEpubAnchorId(anchorId)
     return if (normalizedAnchor != null) {
         "$normalizedPath#$normalizedAnchor"
     } else {
@@ -707,11 +726,43 @@ private fun normalizeResolvedNavigationTarget(path: String, anchorId: String? = 
     }
 }
 
+private fun normalizeEpubAnchorId(anchorId: String?): String? =
+    anchorId
+        ?.trim()
+        ?.removePrefix("#")
+        ?.let(::decodePercentEncoded)
+        ?.lowercase()
+        ?.takeIf { it.isNotBlank() }
+
 private fun normalizeResolvedNavigationTarget(href: String): String =
     normalizeResolvedNavigationTarget(
         path = href.substringBefore('#'),
         anchorId = href.substringAfter('#', missingDelimiterValue = "").takeIf { it.isNotBlank() },
     )
+
+/** EPUB fragments are URI-encoded in many books, while XHTML ids are not. */
+private fun decodePercentEncoded(value: String): String {
+    val result = StringBuilder(value.length)
+    var index = 0
+    while (index < value.length) {
+        if (value[index] != '%' || index + 2 >= value.length) {
+            result.append(value[index++])
+            continue
+        }
+        val bytes = mutableListOf<Byte>()
+        while (index + 2 < value.length && value[index] == '%') {
+            val byte = value.substring(index + 1, index + 3).toIntOrNull(16) ?: break
+            bytes += byte.toByte()
+            index += 3
+        }
+        if (bytes.isEmpty()) {
+            result.append(value[index++])
+        } else {
+            result.append(bytes.toByteArray().decodeToString())
+        }
+    }
+    return result.toString()
+}
 
 private fun resolveNormalizedNavigationPage(
     href: String,

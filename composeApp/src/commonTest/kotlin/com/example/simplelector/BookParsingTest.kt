@@ -251,6 +251,32 @@ class BookParsingTest {
     }
 
     @Test
+    fun epubNoteAnchorsOnStructuralElementsAreKeptAndResolved() {
+        val epub = parseEpub(
+            mapOf(
+                "META-INF/container.xml" to "<container><rootfile full-path=\"book.opf\" /></container>".encodeToByteArray(),
+                "book.opf" to """
+                    <package><manifest>
+                      <item id="chapter" href="text/chapter.xhtml" media-type="application/xhtml+xml" />
+                    </manifest><spine><itemref idref="chapter" /></spine></package>
+                """.trimIndent().encodeToByteArray(),
+                "text/chapter.xhtml" to """
+                    <p>Texto<a epub:type="noteref" href="#nota%201">1</a>.</p>
+                    <aside id="nota 1"><p>Contenido de la nota.</p></aside>
+                """.trimIndent().encodeToByteArray(),
+            ),
+        )
+
+        val source = epub.sections.single().blocks
+        assertEquals("nota 1", source.last().anchorId)
+        assertEquals("text/chapter.xhtml", source.first().navigationBasePath)
+
+        val document = buildReaderDocumentFromEpub(epub, pageWeightLimit = 1)
+        val link = document.pages.first().blocks.first().inlineLinks.single()
+        assertEquals(2, link.navigationPage)
+    }
+
+    @Test
     fun buildReaderDocumentFromEpub_resolvesInlineLinkInContentsList() {
         val document = buildReaderDocumentFromEpub(
             ParsedEpub(

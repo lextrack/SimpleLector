@@ -47,6 +47,8 @@ data class ReaderContentBlock(
     val imageBytes: ByteArray? = null,
     val imageDescription: String? = null,
     val anchorId: String? = null,
+    /** All anchors attached to this rendered block (EPUBs often put several on one element). */
+    val anchorIds: List<String> = emptyList(),
     val navigationBasePath: String? = null,
     val navigationHref: String? = null,
     val navigationPage: Int? = null,

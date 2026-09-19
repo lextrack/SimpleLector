@@ -31,7 +31,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -86,11 +85,13 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -175,7 +176,6 @@ fun ReaderScreen(
     var bookmarkFeedback by remember(activeBook.id) { mutableStateOf<String?>(null) }
     var activeNote by remember(activeBook.id) { mutableStateOf<ReaderInlineLink?>(null) }
     var externalLink by remember(activeBook.id) { mutableStateOf<String?>(null) }
-    var contentTapHandled by remember(activeBook.id) { mutableStateOf(false) }
     val uriHandler = LocalUriHandler.current
     val allowFullTapNavigation = !isZoomableVisualBook || visualZoomLevel <= 1.01f
     LaunchedEffect(activeBook.progressPage) {
@@ -237,6 +237,7 @@ fun ReaderScreen(
                         visualZoomLevel = 1f
                     }
                 },
+                pageNavigationEnabled = !isZoomableVisualBook || visualZoomLevel <= 1.01f,
                 onPrevious = { state.updateProgress(activeBook.progressPage - 1) },
                 onNext = { state.updateProgress(activeBook.progressPage + 1) },
             ),
@@ -339,27 +340,16 @@ fun ReaderScreen(
                 .weight(1f)
                 .fillMaxWidth()
                 .background(readerPageColor(state.readerTheme))
-                .then(
-                    if (allowFullTapNavigation) {
-                        Modifier.readerTapNavigation(
-                            page = activeBook.progressPage,
-                            totalPages = activeBook.totalPages,
-                            onPrevious = { state.updateProgress(activeBook.progressPage - 1) },
-                            onNext = { state.updateProgress(activeBook.progressPage + 1) },
-                            onToggleHud = { state.readerHudVisible = !state.readerHudVisible },
-                            consumeContentTap = { contentTapHandled.also { contentTapHandled = false } },
-                        )
-                    } else {
-                        Modifier.readerEdgeTapNavigation(
-                            page = activeBook.progressPage,
-                            totalPages = activeBook.totalPages,
-                            onPrevious = { state.updateProgress(activeBook.progressPage - 1) },
-                            onNext = { state.updateProgress(activeBook.progressPage + 1) },
-                            onToggleHud = { state.readerHudVisible = !state.readerHudVisible },
-                            consumeContentTap = { contentTapHandled.also { contentTapHandled = false } },
-                        )
-                    },
-            ),
+                .readerTapNavigation(
+                    page = activeBook.progressPage,
+                    totalPages = activeBook.totalPages,
+                    pageNavigationEnabled = allowFullTapNavigation,
+                    onPrevious = { state.updateProgress(activeBook.progressPage - 1) },
+                    onNext = { state.updateProgress(activeBook.progressPage + 1) },
+                    onToggleHud = { state.readerHudVisible = !state.readerHudVisible },
+                    onReadingMotion = { state.readerHudVisible = false },
+                )
+                .readerHideHudOnMouseWheel { state.readerHudVisible = false },
             contentAlignment = if (useDesktopTextLayout) Alignment.TopCenter else Alignment.Center,
         ) {
             val pageContentSlot: @Composable (Int) -> Unit = { pageNumber ->
@@ -427,9 +417,8 @@ fun ReaderScreen(
                                     theme = state.readerTheme,
                                     onNavigateToPage = { state.updateProgress(it) },
                                     onLink = { link ->
-                                        contentTapHandled = true
                                         when {
-                                            link.kind == ReaderLinkKind.NoteReference && link.navigationPage != null -> activeNote = link
+                                            link.kind == ReaderLinkKind.NoteReference -> activeNote = link
                                             link.kind == ReaderLinkKind.External -> externalLink = link.href
                                             link.navigationPage != null -> state.updateProgress(link.navigationPage)
                                         }
@@ -982,11 +971,16 @@ private fun ReaderLinkedText(
     onLink: ((ReaderInlineLink) -> Unit)?,
 ) {
     val linkColor = MaterialTheme.colorScheme.primary
+    var textLayout by remember(block) { mutableStateOf<TextLayoutResult?>(null) }
     val annotated = remember(block) {
         buildAnnotatedString {
             append(block.text)
             block.inlineLinks.forEachIndexed { index, link ->
-                val actionable = link.navigationPage != null || link.kind == ReaderLinkKind.External
+                // A malformed EPUB can omit a resolvable page for a footnote.
+                // It must still react to a tap and explain that state to the reader.
+                val actionable = link.navigationPage != null ||
+                    link.kind == ReaderLinkKind.External ||
+                    link.kind == ReaderLinkKind.NoteReference
                 if (actionable && link.start in 0 until link.end && link.end <= block.text.length) {
                     addStringAnnotation("reader-link", index.toString(), link.start, link.end)
                     addStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline), link.start, link.end)
@@ -994,20 +988,85 @@ private fun ReaderLinkedText(
             }
         }
     }
-    ClickableText(
+    Text(
         text = annotated,
         style = TextStyle(color = color, fontSize = fontSize, lineHeight = lineHeight, textAlign = textAlign, textDecoration = textDecoration),
-        modifier = modifier,
-    ) { offset ->
-        val annotation = annotated.getStringAnnotations("reader-link", offset, offset).firstOrNull() ?: return@ClickableText
-        block.inlineLinks.getOrNull(annotation.item.toIntOrNull() ?: -1)?.let { link -> onLink?.invoke(link) }
+        onTextLayout = { textLayout = it },
+        modifier = modifier.readerLinkTapHandler(annotated, block.inlineLinks, textLayout, onLink),
+    )
+}
+
+/**
+ * Unlike ClickableText, this consumes a gesture only when its final position is
+ * actually over an annotated link. Plain text remains available to the reader's
+ * page-navigation zones.
+ */
+private fun Modifier.readerLinkTapHandler(
+    annotated: AnnotatedString,
+    links: List<ReaderInlineLink>,
+    textLayout: TextLayoutResult?,
+    onLink: ((ReaderInlineLink) -> Unit)?,
+): Modifier = pointerInput(annotated, links, textLayout, onLink) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        // Decide ownership at pointer-down time. Waiting for pointer-up allowed
+        // the reader-level gesture handler to occasionally win after returning
+        // from a footnote or during an AnimatedContent transition.
+        val pressedLink = readerLinkAtPosition(annotated, links, textLayout, down.position)
+        if (pressedLink != null) {
+            down.consume()
+        }
+        var isTap = true
+        var latest = down
+        do {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
+            latest = change
+            if ((change.position - down.position).getDistance() > 24f || event.changes.count { it.pressed } > 1) {
+                isTap = false
+            }
+        } while (event.changes.any { it.pressed })
+
+        if (!isTap) return@awaitEachGesture
+        pressedLink ?: return@awaitEachGesture
+        // The parent sees the consumed gesture on its final pass and will not
+        // page-turn or toggle chrome. A link can therefore be used repeatedly.
+        latest.consume()
+        onLink?.invoke(pressedLink)
     }
+}
+
+/**
+ * Text layout can report the insertion offset immediately after a tiny
+ * superscript. Check that trailing character too, so footnote calls remain
+ * reliably tappable instead of requiring a pixel-perfect press.
+ */
+private fun readerLinkAtPosition(
+    annotated: AnnotatedString,
+    links: List<ReaderInlineLink>,
+    textLayout: TextLayoutResult?,
+    position: Offset,
+): ReaderInlineLink? {
+    val offset = textLayout?.getOffsetForPosition(position) ?: return null
+    return listOf(offset, offset - 1)
+        .filter { it in 0..annotated.length }
+        .asSequence()
+        .mapNotNull { candidate ->
+            annotated.getStringAnnotations("reader-link", candidate, candidate)
+                .firstOrNull()
+                ?.item
+                ?.toIntOrNull()
+                ?.let(links::getOrNull)
+        }
+        .firstOrNull()
 }
 
 private fun ReaderDocument?.noteTextFor(link: ReaderInlineLink): String? {
     val page = pagesOrNull(link.navigationPage) ?: return null
     val anchor = link.targetAnchorId?.lowercase()
-    return page.blocks.firstOrNull { block -> anchor != null && block.anchorId?.lowercase() == anchor }
+    return page.blocks.firstOrNull { block ->
+        anchor != null && (block.anchorIds + listOfNotNull(block.anchorId)).any { it.lowercase() == anchor }
+    }
         ?.text
         ?: page.blocks.firstOrNull { it.text.isNotBlank() }?.text
 }
@@ -1361,6 +1420,7 @@ private fun Modifier.readerKeyboardNavigation(
     currentPage: Int,
     totalPages: Int,
     enabled: Boolean,
+    pageNavigationEnabled: Boolean,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
     onResetZoom: () -> Unit,
@@ -1388,12 +1448,14 @@ private fun Modifier.readerKeyboardNavigation(
     }
     when (event.key) {
         Key.DirectionLeft -> {
+            if (!pageNavigationEnabled) return@onPreviewKeyEvent false
             if (currentPage > 1) {
                 onPrevious()
             }
             true
         }
         Key.DirectionRight -> {
+            if (!pageNavigationEnabled) return@onPreviewKeyEvent false
             if (currentPage < totalPages) {
                 onNext()
             }
@@ -1454,72 +1516,102 @@ private enum class ReaderPanel {
 private fun Modifier.readerTapNavigation(
     page: Int,
     totalPages: Int,
+    pageNavigationEnabled: Boolean,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onToggleHud: () -> Unit,
-    consumeContentTap: () -> Boolean,
-): Modifier = pointerInput(page, totalPages) {
+    onReadingMotion: () -> Unit,
+): Modifier = pointerInput(page, totalPages, pageNavigationEnabled) {
+    var lastEmptyTapTime = 0L
+    var lastEmptyTapPosition = Offset.Zero
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
-        var isTap = true
-        var upX = down.position.x
+        var hasMultiplePointers = false
+        var latestPosition = down.position
+        var latestChange = down
+        var consumedByContent = down.isConsumed
+        var directionLocked = false
+        var isHorizontalSwipe = false
 
         do {
-            val event = awaitPointerEvent()
+            // Read the final pass so annotated links and reader controls can
+            // consume their own taps before reader-level handling decides.
+            val event = awaitPointerEvent(PointerEventPass.Final)
             if (event.changes.count { it.pressed } > 1) {
-                isTap = false
+                hasMultiplePointers = true
             }
             val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
-            val delta = change.position - down.position
-            if (delta.getDistance() > 24f) {
-                isTap = false
+            consumedByContent = consumedByContent || change.isConsumed
+            latestPosition = change.position
+            latestChange = change
+            if (!directionLocked) {
+                val movement = latestPosition - down.position
+                if (movement.getDistance() >= 24f) {
+                    val horizontal = kotlin.math.abs(movement.x)
+                    val vertical = kotlin.math.abs(movement.y)
+                    when {
+                        horizontal > vertical * 1.25f -> {
+                            directionLocked = true
+                            isHorizontalSwipe = true
+                        }
+                        vertical >= horizontal -> {
+                            // Lock vertical gestures immediately to scrolling.
+                            directionLocked = true
+                        }
+                    }
+                }
             }
-            upX = change.position.x
         } while (event.changes.any { it.pressed })
 
-        if (isTap && !consumeContentTap()) {
-            val third = size.width / 3f
-            when {
-                upX < third && page > 1 -> onPrevious()
-                upX > third * 2f && page < totalPages -> onNext()
-                upX in third..(third * 2f) -> onToggleHud()
+        if (hasMultiplePointers) return@awaitEachGesture
+        val delta = latestPosition - down.position
+        val hasReadingMotion = delta.getDistance() >= 24f
+        // Page swipes work from any part of the reader. Do not let the vertical
+        // scroll container suppress a gesture that is clearly horizontal.
+        val horizontalSwipe = isHorizontalSwipe && kotlin.math.abs(delta.x) >= 48f
+        when {
+            pageNavigationEnabled && horizontalSwipe && delta.x > 0f && page > 1 -> {
+                lastEmptyTapTime = 0L
+                onReadingMotion()
+                onPrevious()
             }
+            pageNavigationEnabled && horizontalSwipe && delta.x < 0f && page < totalPages -> {
+                lastEmptyTapTime = 0L
+                onReadingMotion()
+                onNext()
+            }
+            hasReadingMotion -> {
+                lastEmptyTapTime = 0L
+                onReadingMotion()
+            }
+            !consumedByContent && delta.getDistance() < 24f -> {
+                // A single tap is deliberately inert: it must never compete
+                // with citations or controls in the middle of the page.
+                val now = latestChange.uptimeMillis
+                val isDoubleTap = now - lastEmptyTapTime <= 350L &&
+                    (latestPosition - lastEmptyTapPosition).getDistance() <= 64f
+                if (isDoubleTap) {
+                    lastEmptyTapTime = 0L
+                    onToggleHud()
+                } else {
+                    lastEmptyTapTime = now
+                    lastEmptyTapPosition = latestPosition
+                }
+            }
+            else -> lastEmptyTapTime = 0L
         }
     }
 }
 
-private fun Modifier.readerEdgeTapNavigation(
-    page: Int,
-    totalPages: Int,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-    onToggleHud: () -> Unit,
-    consumeContentTap: () -> Boolean,
-): Modifier = pointerInput(page, totalPages) {
-    awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false)
-        var isTap = true
-        var upX = down.position.x
-
-        do {
+/** Mouse-wheel reading is a scroll gesture too, but has no pointer down/up cycle. */
+private fun Modifier.readerHideHudOnMouseWheel(
+    onReadingMotion: () -> Unit,
+): Modifier = pointerInput(onReadingMotion) {
+    awaitPointerEventScope {
+        while (true) {
             val event = awaitPointerEvent()
-            if (event.changes.count { it.pressed } > 1) {
-                isTap = false
-            }
-            val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
-            val delta = change.position - down.position
-            if (delta.getDistance() > 24f) {
-                isTap = false
-            }
-            upX = change.position.x
-        } while (event.changes.any { it.pressed })
-
-        if (isTap && !consumeContentTap()) {
-            val edgeWidth = size.width * 0.16f
-            when {
-                upX < edgeWidth && page > 1 -> onPrevious()
-                upX > size.width - edgeWidth && page < totalPages -> onNext()
-                else -> onToggleHud()
+            if (event.type == PointerEventType.Scroll) {
+                onReadingMotion()
             }
         }
     }

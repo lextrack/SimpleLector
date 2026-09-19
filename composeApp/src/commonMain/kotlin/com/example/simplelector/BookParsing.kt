@@ -450,6 +450,7 @@ fun htmlToReaderBlocks(
         .sanitizeInvisibleText()
         .normalizeReaderTextSpacing()
 
+    val pendingAnchorIds = mutableListOf<String>()
     return prepared
         .replace("\r\n", "\n")
         .replace(Regex("[ \\t]+"), " ")
@@ -458,29 +459,44 @@ fun htmlToReaderBlocks(
         .mapNotNull { rawBlock ->
             val block = rawBlock.trim()
             if (block.isBlank()) return@mapNotNull null
+            val anchorIds = Regex("""\[\[ANCHOR_(\d+)]]""").findAll(block)
+                .mapNotNull { match ->
+                    navigationLinks["[[ANCHOR_${match.groupValues[1]}]]"]?.href?.removePrefix("#")
+                }
+                .toList()
+            pendingAnchorIds += anchorIds
             imageBlocks[block]?.takeIf { it.imageBytes != null || !it.imageDescription.isNullOrBlank() }?.let { imageBlock ->
-                return@mapNotNull imageBlock
+                val attachedAnchors = pendingAnchorIds.distinct()
+                pendingAnchorIds.clear()
+                return@mapNotNull imageBlock.copy(
+                    anchorId = attachedAnchors.firstOrNull(),
+                    anchorIds = attachedAnchors,
+                )
             }
             val linkMarkerMatch = Regex("""\[\[LINK_(\d+)]]""").find(block)
-            val anchorMarkerMatch = Regex("""\[\[ANCHOR_(\d+)]]""").find(block)
             val headingMatch = Regex("""^\[\[H([1-6])]]\s*""").find(block)
             val linkToken = linkMarkerMatch?.groups?.get(1)?.value?.let { "[[LINK_$it]]" }
-            val anchorToken = anchorMarkerMatch?.groups?.get(1)?.value?.let { "[[ANCHOR_$it]]" }
             val blockWithoutLinkTokens = block
                 .replace(Regex("""\[\[ANCHOR_\d+]]"""), "")
                 .replace(Regex("""\[\[LINK_\d+]]"""), "")
                 .replace(Regex("""\[\[ENDLINK_\d+]]"""), "")
             val cleanedText = blockWithoutLinkTokens.replace(Regex("""^\[\[H([1-6])]]\s*"""), "").trim()
+            // An id on a block element becomes its own token after structural
+            // whitespace is restored. Keep it until the next visible block so
+            // footnotes such as <aside id="note"><p>… are addressable.
             if (cleanedText.isBlank()) return@mapNotNull null
             val kind = when {
                 headingMatch != null -> ReaderContentKind.Heading
                 cleanedText.startsWith("• ") -> ReaderContentKind.ListItem
                 else -> ReaderContentKind.Paragraph
             }
+            val attachedAnchors = pendingAnchorIds.distinct()
+            pendingAnchorIds.clear()
             ReaderContentBlock(
                 kind = kind,
                 text = cleanedText,
-                anchorId = anchorToken?.let(navigationLinks::get)?.href?.removePrefix("#"),
+                anchorId = attachedAnchors.firstOrNull(),
+                anchorIds = attachedAnchors,
                 navigationHref = linkToken?.let(navigationLinks::get)?.href,
                 inlineLinks = extractInlineLinks(block, cleanedText, navigationLinks),
             )
@@ -493,7 +509,7 @@ private fun htmlLinkKind(attributes: String, href: String): ReaderLinkKind {
     return when {
         "noteref" in semantics || "doc-noteref" in semantics -> ReaderLinkKind.NoteReference
         "backlink" in semantics || "doc-backlink" in semantics -> ReaderLinkKind.Backlink
-        href.startsWith("https://", ignoreCase = true) || href.startsWith("http://", ignoreCase = true) -> ReaderLinkKind.External
+        href.matches(Regex("""^[a-z][a-z0-9+.-]*:""", RegexOption.IGNORE_CASE)) -> ReaderLinkKind.External
         else -> ReaderLinkKind.Internal
     }
 }
