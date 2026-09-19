@@ -8,6 +8,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -56,6 +57,7 @@ import javax.imageio.ImageIO
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import kotlin.math.roundToInt
+import kotlin.math.min
 
 private const val DesktopVisualRenderMaxImageDimension = 2_000
 
@@ -171,7 +173,7 @@ actual fun PlatformDocumentPage(
         if (bitmap == null) {
             CircularProgressIndicator()
         } else {
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight()
@@ -192,6 +194,7 @@ actual fun PlatformDocumentPage(
                         }
                     }
                     .pointerInput(zoomLevel) {
+                        if (zoomLevel <= 1.01f) return@pointerInput
                         detectDragGestures { change, dragAmount ->
                             change.consume()
                             scope.launch {
@@ -275,12 +278,16 @@ actual fun PlatformDocumentPage(
                     .verticalScroll(verticalScrollState),
                 contentAlignment = Alignment.Center,
             ) {
+                val fitScale = min(
+                    maxWidth.value / bitmap!!.width.toFloat(),
+                    maxHeight.value / bitmap!!.height.toFloat(),
+                ).coerceAtMost(1f)
                 Image(
                     bitmap = bitmap!!,
                     contentDescription = null,
                     modifier = Modifier
-                        .width((bitmap!!.width * zoomLevel).dp)
-                        .height((bitmap!!.height * zoomLevel).dp),
+                        .width((bitmap!!.width * fitScale * zoomLevel).dp)
+                        .height((bitmap!!.height * fitScale * zoomLevel).dp),
                     contentScale = ContentScale.FillBounds,
                 )
             }

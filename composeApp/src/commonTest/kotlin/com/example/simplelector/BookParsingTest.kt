@@ -386,4 +386,30 @@ class BookParsingTest {
 
         assertEquals(2, document.pages[0].blocks.first().inlineLinks.single().navigationPage)
     }
+
+    @Test
+    fun resolveEpubImageBytes_acceptsUppercaseBase64DataUris() {
+        val image = "imagen".encodeToByteArray()
+
+        val resolved = resolveEpubImageBytes(
+            basePath = "text",
+            rawSource = "data:image/png;BASE64,aW1hZ2Vu",
+            entries = emptyMap(),
+        )
+
+        assertEquals(image.toList(), resolved?.toList())
+    }
+
+    @Test
+    fun resolveEpubImageBytes_resolvesPercentEncodedRelativeImagePath() {
+        val image = byteArrayOf(1, 2, 3)
+
+        val resolved = resolveEpubImageBytes(
+            basePath = "text",
+            rawSource = "../images/Ilustraci%C3%B3n%201.png?size=large#chart",
+            entries = mapOf("images/ilustración 1.png" to image),
+        )
+
+        assertEquals(image.toList(), resolved?.toList())
+    }
 }

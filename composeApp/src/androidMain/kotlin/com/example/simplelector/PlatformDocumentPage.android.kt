@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -45,6 +46,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.zip.ZipInputStream
+import kotlin.math.min
 
 private const val CbzRenderMaxImageDimension = 2_000
 private const val NativeImageLogTag = "SimpleLectorNative"
@@ -287,7 +289,7 @@ actual fun PlatformDocumentPage(
                 }
                 onZoomChange?.invoke(gestureZoom)
             }
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight()
@@ -298,12 +300,16 @@ actual fun PlatformDocumentPage(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
+                val fitScale = min(
+                    maxWidth.value / widthDp.value,
+                    maxHeight.value / heightDp.value,
+                ).coerceAtMost(1f)
                 Image(
                     bitmap = bitmap!!.asImageBitmap(),
                     contentDescription = null,
                     modifier = Modifier
-                        .width(widthDp)
-                        .height(heightDp)
+                        .width(widthDp * fitScale)
+                        .height(heightDp * fitScale)
                         .graphicsLayer {
                             scaleX = gestureZoom
                             scaleY = gestureZoom

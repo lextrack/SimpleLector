@@ -839,7 +839,7 @@ internal fun normalizeArchivePath(path: String): String =
     path.replace('\\', '/').trim().trimStart('/').lowercase()
 
 private fun String.isEpubImagePath(): Boolean =
-    endsWith(".jpg") || endsWith(".jpeg") || endsWith(".png") || endsWith(".webp")
+    endsWith(".jpg") || endsWith(".jpeg") || endsWith(".png") || endsWith(".webp") || endsWith(".gif")
 
 internal fun extractSectionTitle(path: String, blocks: List<ReaderContentBlock>): String? {
     val heading = blocks
@@ -936,7 +936,13 @@ internal fun resolveEpubResourcePath(
 
 @OptIn(ExperimentalEncodingApi::class)
 internal fun decodeInlineDataImage(source: String): ByteArray? {
-    val encoded = source.substringAfter("base64,", missingDelimiterValue = "")
+    // The media type and its parameters are case-insensitive. EPUBs generated
+    // by different tools commonly use `BASE64` rather than lowercase.
+    val commaIndex = source.indexOf(',')
+    if (commaIndex < 0 || !source.substring(0, commaIndex).contains(";base64", ignoreCase = true)) {
+        return null
+    }
+    val encoded = source.substring(commaIndex + 1)
     if (encoded.isBlank()) return null
     return runCatching { Base64.decode(encoded) }.getOrNull()
 }
