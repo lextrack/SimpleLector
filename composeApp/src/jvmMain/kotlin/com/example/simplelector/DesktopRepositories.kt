@@ -33,6 +33,7 @@ private data class DesktopEpubIndex(
     val contentPaths: List<String>,
     val coverEntryPath: String?,
     val navigationEntries: List<EpubNavigationEntry>,
+    val declaredPageCount: Int?,
     val navigationTitles: Map<String, String>,
     val entryNameByNormalizedPath: Map<String, String>,
 )
@@ -155,8 +156,9 @@ class DesktopReaderRepository : ReaderRepository {
                     "pdf" -> buildReaderDocumentFromDesktopPdf(file)
                     "txt" -> buildReaderDocumentFromText(decodeBookText(file.readBytes()), pageWeightLimit = textPageWeightLimit)
                     "md", "markdown" -> buildReaderDocumentFromMarkdown(decodeBookText(file.readBytes()), pageWeightLimit = textPageWeightLimit)
-                    "epub" -> loadDesktopParsedEpub(file)?.let { buildReaderDocumentFromEpub(it, pageWeightLimit = textPageWeightLimit) }
-                    "cbz", "cbr" -> buildDesktopVisualReaderDocument(book.totalPages)
+                    "epub" -> loadDesktopParsedEpub(file)?.let { buildReaderDocumentFromEpub(it) }
+                    "cbz" -> buildDesktopVisualReaderDocument(inspectDesktopCbz(file).pageCount)
+                    "cbr" -> buildDesktopVisualReaderDocument(inspectDesktopCbr(file).pageCount)
                     else -> null
                 }
             }.getOrElse { error ->
@@ -414,14 +416,15 @@ private fun loadDesktopEpubIndex(file: File): DesktopEpubIndex? {
                 ?.let(::add)
         }.distinct()
 
+        val navigationSourceEntries = navigationDocuments.mapNotNull { path ->
+            val entryName = entryNameByNormalizedPath[path] ?: return@mapNotNull null
+            val bytes = zipFile.readEntryBytes(entryName) ?: return@mapNotNull null
+            path to bytes
+        }.toMap(linkedMapOf())
         val navigationEntries = parseNavigationEntries(
             opfXml = opfXml,
             manifest = manifest,
-            entries = navigationDocuments.mapNotNull { path ->
-                val entryName = entryNameByNormalizedPath[path] ?: return@mapNotNull null
-                val bytes = zipFile.readEntryBytes(entryName) ?: return@mapNotNull null
-                path to bytes
-            }.toMap(linkedMapOf()),
+            entries = navigationSourceEntries,
         )
 
         val navigationTitles = linkedMapOf<String, String>()
@@ -438,6 +441,7 @@ private fun loadDesktopEpubIndex(file: File): DesktopEpubIndex? {
             contentPaths = contentPaths,
             coverEntryPath = findCoverPath(opfXml, manifest, entryNameByNormalizedPath.keys),
             navigationEntries = navigationEntries,
+            declaredPageCount = extractEpubDeclaredPageCount(opfXml, manifest, navigationSourceEntries),
             navigationTitles = navigationTitles,
             entryNameByNormalizedPath = entryNameByNormalizedPath,
         )
@@ -515,6 +519,7 @@ private fun parseDesktopEpub(
         sections = sections,
         coverEntryPath = index.coverEntryPath,
         navigationEntries = index.navigationEntries,
+        declaredPageCount = index.declaredPageCount,
     )
 }
 

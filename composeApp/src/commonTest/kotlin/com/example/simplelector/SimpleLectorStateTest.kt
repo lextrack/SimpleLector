@@ -75,6 +75,26 @@ class SimpleLectorStateTest {
     }
 
     @Test
+    fun refreshFolders_usesNewPageCountWhenAFileWasReplaced() {
+        val state = SimpleLectorState()
+        val previous = book(id = "/library/comic.cbz", folder = "/library")
+            .copy(signature = "old", format = "cbz", totalPages = 120, progressPage = 115, hasRealPageCount = true)
+        val replacement = previous.copy(signature = "new", totalPages = 80, progressPage = 1)
+        state.hydrateLibrarySnapshot(
+            listOf(scannedFolder("/library", "/library", listOf(previous))),
+        )
+
+        state.refreshFolders(
+            listOf(scannedFolder("/library", "/library", listOf(replacement))),
+        )
+
+        val resolved = state.books.single()
+        assertEquals(80, resolved.totalPages)
+        assertEquals(80, resolved.progressPage)
+        assertTrue(resolved.hasRealPageCount)
+    }
+
+    @Test
     fun buildBookFromPath_usesPathIndependentSignatureWhenMetadataIsAvailable() {
         val first = buildBookFromPath(
             path = "/library/original/My Book.epub",

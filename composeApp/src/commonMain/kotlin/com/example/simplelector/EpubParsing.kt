@@ -3,12 +3,17 @@ package com.example.simplelector
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
+/** Used only when the EPUB has no publisher-provided page-list. */
+const val EpubFallbackPageWeightLimit = 3_600
+
 data class ParsedEpub(
     val title: String?,
     val author: String?,
     val sections: List<ReaderSectionSource>,
     val coverEntryPath: String?,
     val navigationEntries: List<EpubNavigationEntry> = emptyList(),
+    /** Numbering supplied by the publisher's EPUB page-list, when present. */
+    val declaredPageCount: Int? = null,
 )
 
 data class ReaderSectionSource(
@@ -37,6 +42,8 @@ fun parseEpub(entries: Map<String, ByteArray>): ParsedEpub {
     val navigationEntries = opfXml
         ?.let { parseNavigationEntries(it, manifest, normalizedEntries) }
         .orEmpty()
+    val declaredPageCount = opfXml
+        ?.let { extractEpubDeclaredPageCount(it, manifest, normalizedEntries) }
     val navigationTitles = linkedMapOf<String, String>()
     navigationEntries.forEach { entry ->
         val path = entry.href.substringBefore('#')
@@ -112,6 +119,7 @@ fun parseEpub(entries: Map<String, ByteArray>): ParsedEpub {
         sections = sections,
         coverEntryPath = findCoverPath(opfXml, manifest, normalizedEntries.keys),
         navigationEntries = navigationEntries,
+        declaredPageCount = declaredPageCount,
     )
 }
 
@@ -122,13 +130,13 @@ fun extractEpubCoverBytes(entries: Map<String, ByteArray>): ByteArray? {
 }
 
 fun buildReaderDocumentFromEpub(parsed: ParsedEpub): ReaderDocument =
-    buildReaderDocumentFromEpub(parsed, pageWeightLimit = 1_900)
+    buildReaderDocumentFromEpub(parsed, pageWeightLimit = EpubFallbackPageWeightLimit)
 
 fun buildReaderDocumentFromEpub(
     parsed: ParsedEpub,
     pageWeightLimit: Int,
-): ReaderDocument =
-    buildReaderDocumentFromSectionSources(
+): ReaderDocument {
+    val document = buildReaderDocumentFromSectionSources(
         sections = parsed.sections.map { section ->
             section.copy(
                 blocks = section.blocks.map { block ->
@@ -144,8 +152,33 @@ fun buildReaderDocumentFromEpub(
         pageWeightLimit = pageWeightLimit,
         sectionBreakThresholdFraction = 0.36f,
         mergeContinuationParagraphs = false,
-        forcePageBreakBetweenSections = true,
+        // XHTML files are implementation details, not necessarily chapters or pages.
+        forcePageBreakBetweenSections = false,
     )
+    return document.reconcileWithDeclaredEpubPageCount(parsed.declaredPageCount)
+}
+
+private fun ReaderDocument.reconcileWithDeclaredEpubPageCount(declaredPageCount: Int?): ReaderDocument {
+    val targetCount = declaredPageCount?.takeIf { it > 0 && it < pages.size } ?: return this
+    val sourceCount = pages.size
+    val remapPage = { sourcePage: Int -> ((sourcePage - 1) * targetCount / sourceCount) + 1 }
+    val regroupedPages = List(targetCount) { targetIndex ->
+        val start = targetIndex * sourceCount / targetCount
+        val end = ((targetIndex + 1) * sourceCount / targetCount).coerceAtMost(sourceCount)
+        val blocks = pages.subList(start, end).flatMap { page -> page.blocks }
+        buildReaderPage(blocks).copy(
+            blocks = blocks.map { block ->
+                block.navigationPage?.let { page -> block.copy(navigationPage = remapPage(page)) } ?: block
+            },
+        )
+    }
+    return copy(
+        pages = regroupedPages,
+        totalPages = regroupedPages.size,
+        chapters = chapters.map { chapter -> chapter.copy(page = remapPage(chapter.page)) }
+            .distinctBy { it.page to it.title },
+    )
+}
 
 fun buildReaderDocumentFromSections(sections: List<String>): ReaderDocument =
     buildReaderDocumentFromSections(sections, pageWeightLimit = 1_900)
@@ -569,6 +602,41 @@ internal fun parseNavigationEntries(
     return navigation.entries.map { (href, title) ->
         EpubNavigationEntry(href = href, title = title)
     }
+}
+
+/**
+ * EPUB page lists map locations in a reflowable book to the publisher's printed
+ * page numbering. Unlike a character estimate, this is stable across devices.
+ */
+internal fun extractEpubDeclaredPageCount(
+    opfXml: String,
+    manifest: Map<String, ManifestItem>,
+    entries: Map<String, ByteArray>,
+): Int? {
+    val pageTargets = linkedSetOf<String>()
+    manifest.values
+        .filter { "nav" in it.properties.lowercase() || it.mediaType == "application/xhtml+xml" || it.mediaType == "application/x-dtbncx+xml" }
+        .forEach { item ->
+            val text = entries[item.href]?.decodeToString() ?: return@forEach
+            if (item.href.endsWith(".ncx", ignoreCase = true)) {
+                Regex("""<pageTarget\b[^>]*>.*?<content\b[^>]*src\s*=\s*['"]([^'"]+)['"]""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+                    .findAll(text)
+                    .forEach { match -> pageTargets += match.groupValues[1] }
+            } else {
+                Regex("""<nav\b([^>]*)>(.*?)</nav>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+                    .findAll(text)
+                    .filter { match ->
+                        val attributes = match.groupValues[1].lowercase()
+                        "page-list" in attributes || "doc-pagelist" in attributes
+                    }
+                    .flatMap { match ->
+                        Regex("""<a\b([^>]*)>""", RegexOption.IGNORE_CASE).findAll(match.groupValues[2])
+                    }
+                    .mapNotNull { match -> extractAttribute(match.groupValues[1], "href") }
+                    .forEach { href -> pageTargets += href }
+            }
+        }
+    return pageTargets.size.takeIf { it > 0 }
 }
 
 internal fun extractDcTitle(opfXml: String): String? =

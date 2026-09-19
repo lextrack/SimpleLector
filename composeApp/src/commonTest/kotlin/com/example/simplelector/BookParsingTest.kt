@@ -184,4 +184,55 @@ class BookParsingTest {
 
         assertEquals(2, document.totalPages)
     }
+
+    @Test
+    fun buildReaderDocumentFromEpub_usesPublisherPageListInsteadOfVirtualChunkCount() {
+        val parsed = ParsedEpub(
+            title = "Prueba",
+            author = null,
+            sections = listOf(
+                ReaderSectionSource(
+                    path = "book.xhtml",
+                    title = null,
+                    blocks = List(4) { index ->
+                        ReaderContentBlock(ReaderContentKind.Paragraph, text = "Bloque ${index + 1}")
+                    },
+                ),
+            ),
+            coverEntryPath = null,
+            declaredPageCount = 2,
+        )
+
+        val document = buildReaderDocumentFromEpub(parsed, pageWeightLimit = 1)
+
+        assertEquals(2, document.totalPages)
+        assertEquals(2, document.pages.size)
+        assertEquals(2, document.pages[0].blocks.size)
+        assertEquals(2, document.pages[1].blocks.size)
+    }
+
+    @Test
+    fun parseEpub_readsPublisherPageList() {
+        val epub = parseEpub(
+            mapOf(
+                "META-INF/container.xml" to """<container><rootfile full-path="OPS/book.opf" /></container>""".encodeToByteArray(),
+                "OPS/book.opf" to """
+                    <package><manifest>
+                      <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml" />
+                      <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+                    </manifest><spine><itemref idref="chapter" /></spine></package>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/chapter.xhtml" to "<p>Texto.</p>".encodeToByteArray(),
+                "OPS/nav.xhtml" to """
+                    <nav epub:type="page-list"><ol>
+                      <li><a href="chapter.xhtml#p1">1</a></li>
+                      <li><a href="chapter.xhtml#p2">2</a></li>
+                      <li><a href="chapter.xhtml#p3">3</a></li>
+                    </ol></nav>
+                """.trimIndent().encodeToByteArray(),
+            ),
+        )
+
+        assertEquals(3, epub.declaredPageCount)
+    }
 }

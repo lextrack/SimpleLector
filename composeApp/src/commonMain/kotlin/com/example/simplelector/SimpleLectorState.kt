@@ -303,11 +303,14 @@ class SimpleLectorState {
                 if (selectedBookId == previous.id) {
                     selectedBookId = scanned.id
                 }
-                val totalPages = if (previous.hasRealPageCount) previous.totalPages else scanned.totalPages
+                // A replacement file can have a different PDF/comic page count. Keeping the
+                // previous total here creates reachable positions with no renderable page.
+                val sameRevision = previous.signature == scanned.signature
+                val totalPages = if (sameRevision && previous.hasRealPageCount) previous.totalPages else scanned.totalPages
                 scanned.copy(
                     totalPages = totalPages,
                     progressPage = previous.progressPage.coerceIn(1, totalPages),
-                    hasRealPageCount = previous.hasRealPageCount,
+                    hasRealPageCount = if (sameRevision) previous.hasRealPageCount else scanned.hasRealPageCount,
                 )
             }
         }
@@ -358,10 +361,12 @@ class SimpleLectorState {
 
         val previous = books.firstOrNull { it.id == book.id || it.signature == book.signature }
         val mergedBook = if (previous != null) {
+            val sameRevision = previous.signature == book.signature
+            val totalPages = if (sameRevision && previous.hasRealPageCount) previous.totalPages else book.totalPages
             book.copy(
-                totalPages = if (previous.hasRealPageCount) previous.totalPages else book.totalPages,
-                progressPage = previous.progressPage.coerceIn(1, maxOf(previous.totalPages, book.totalPages)),
-                hasRealPageCount = previous.hasRealPageCount,
+                totalPages = totalPages,
+                progressPage = previous.progressPage.coerceIn(1, totalPages),
+                hasRealPageCount = if (sameRevision) previous.hasRealPageCount else book.hasRealPageCount,
             )
         } else {
             book

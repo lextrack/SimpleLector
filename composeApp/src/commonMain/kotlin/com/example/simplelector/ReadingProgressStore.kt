@@ -31,12 +31,17 @@ fun SimpleLectorState.applySavedProgress(progressItems: List<SavedBookProgress>)
     val byId = progressItems.associateBy { it.bookId }
     val bySignature = progressItems.associateBy { it.signature }
     books.replaceAll { book ->
-        val saved = byId[book.id] ?: bySignature[book.signature] ?: return@replaceAll book
-        val totalPages = if (saved.hasRealPageCount) saved.totalPages.coerceAtLeast(1) else book.totalPages
+        val saved = bySignature[book.signature]
+            ?: byId[book.id]?.takeIf { it.signature.isBlank() || it.signature == book.signature }
+            ?: return@replaceAll book
+        // Saved totals are valid only for the same revision. An updated archive could
+        // otherwise expose a slider position for a page that no longer exists.
+        val sameRevision = saved.signature.isNotBlank() && saved.signature == book.signature
+        val totalPages = if (sameRevision && saved.hasRealPageCount) saved.totalPages.coerceAtLeast(1) else book.totalPages
         book.copy(
             progressPage = saved.progressPage.coerceIn(1, totalPages),
             totalPages = totalPages,
-            hasRealPageCount = saved.hasRealPageCount,
+            hasRealPageCount = if (sameRevision) saved.hasRealPageCount else book.hasRealPageCount,
         )
     }
 }

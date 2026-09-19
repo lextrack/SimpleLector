@@ -41,6 +41,7 @@ private data class AndroidEpubIndex(
     val contentPaths: List<String>,
     val coverEntryPath: String?,
     val navigationEntries: List<EpubNavigationEntry>,
+    val declaredPageCount: Int?,
     val navigationTitles: Map<String, String>,
     val entryNameByNormalizedPath: Map<String, String>,
 )
@@ -224,12 +225,17 @@ class AndroidReaderRepository(
                             ?: throw IllegalStateException(MissingBookMessage)
                         buildReaderDocumentFromEpub(parsedEpub)
                     }
-                    "cbz" -> buildVisualReaderDocument(book.totalPages)
+                    "cbz" -> {
+                        val comic = inspectAndroidCbz(contentResolver, context.cacheDir, uri, book.signature)
+                            ?: throw IllegalStateException(MissingBookMessage)
+                        if (comic.pageCount <= 0) throw IllegalStateException(MissingBookMessage)
+                        buildVisualReaderDocument(comic.pageCount)
+                    }
                     "cbr" -> {
-                        if (!canOpenAndroidCbr(contentResolver, context.cacheDir, uri, book.signature)) {
-                            throw IllegalStateException(UnsupportedCbrRar5Message)
-                        }
-                        buildVisualReaderDocument(book.totalPages)
+                        val comic = inspectAndroidCbr(contentResolver, context.cacheDir, uri, book.signature)
+                            ?: throw IllegalStateException(MissingBookMessage)
+                        if (comic.pageCount <= 0) throw IllegalStateException(MissingBookMessage)
+                        buildVisualReaderDocument(comic.pageCount)
                     }
                     else -> null
                 }
@@ -903,6 +909,7 @@ private fun inspectAndroidEpub(
             sections = if (index.contentPaths.isEmpty()) emptyList() else listOf(ReaderSectionSource(title = index.title, blocks = emptyList())),
             coverEntryPath = index.coverEntryPath,
             navigationEntries = index.navigationEntries,
+            declaredPageCount = index.declaredPageCount,
         )
     }
 
@@ -982,14 +989,15 @@ private fun loadAndroidEpubIndex(
                 ?.let(::add)
         }.distinct()
 
+        val navigationSourceEntries = navigationDocuments.mapNotNull { path ->
+            val entryName = entryNameByNormalizedPath[path] ?: return@mapNotNull null
+            val bytes = zipFile.readEntryBytes(entryName) ?: return@mapNotNull null
+            path to bytes
+        }.toMap(linkedMapOf())
         val navigationEntries = parseNavigationEntries(
             opfXml = opfXml,
             manifest = manifest,
-            entries = navigationDocuments.mapNotNull { path ->
-                val entryName = entryNameByNormalizedPath[path] ?: return@mapNotNull null
-                val bytes = zipFile.readEntryBytes(entryName) ?: return@mapNotNull null
-                path to bytes
-            }.toMap(linkedMapOf()),
+            entries = navigationSourceEntries,
         )
 
         val navigationTitles = linkedMapOf<String, String>()
@@ -1006,6 +1014,7 @@ private fun loadAndroidEpubIndex(
             contentPaths = contentPaths,
             coverEntryPath = findCoverPath(opfXml, manifest, entryNameByNormalizedPath.keys),
             navigationEntries = navigationEntries,
+            declaredPageCount = extractEpubDeclaredPageCount(opfXml, manifest, navigationSourceEntries),
             navigationTitles = navigationTitles,
             entryNameByNormalizedPath = entryNameByNormalizedPath,
         )
@@ -1089,6 +1098,7 @@ private fun parseAndroidEpub(
         sections = sections,
         coverEntryPath = index.coverEntryPath,
         navigationEntries = index.navigationEntries,
+        declaredPageCount = index.declaredPageCount,
     )
 }
 
