@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -62,6 +63,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -87,12 +89,16 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -167,6 +173,10 @@ fun ReaderScreen(
     var searchQuery by remember(activeBook.id) { mutableStateOf("") }
     var visualZoomLevel by remember(activeBook.id) { mutableFloatStateOf(1f) }
     var bookmarkFeedback by remember(activeBook.id) { mutableStateOf<String?>(null) }
+    var activeNote by remember(activeBook.id) { mutableStateOf<ReaderInlineLink?>(null) }
+    var externalLink by remember(activeBook.id) { mutableStateOf<String?>(null) }
+    var contentTapHandled by remember(activeBook.id) { mutableStateOf(false) }
+    val uriHandler = LocalUriHandler.current
     val allowFullTapNavigation = !isZoomableVisualBook || visualZoomLevel <= 1.01f
     LaunchedEffect(activeBook.progressPage) {
         jumpToPage = activeBook.progressPage.toString()
@@ -181,6 +191,12 @@ fun ReaderScreen(
         if (bookmarkFeedback != null) {
             delay(1800)
             bookmarkFeedback = null
+        }
+    }
+    LaunchedEffect(activeBook.id, state.readerHudVisible, readerPanel) {
+        if (state.readerHudVisible && readerPanel == ReaderPanel.None) {
+            delay(7_000)
+            state.readerHudVisible = false
         }
     }
     val searchResults = remember(readerDocument, searchQuery) {
@@ -331,6 +347,7 @@ fun ReaderScreen(
                             onPrevious = { state.updateProgress(activeBook.progressPage - 1) },
                             onNext = { state.updateProgress(activeBook.progressPage + 1) },
                             onToggleHud = { state.readerHudVisible = !state.readerHudVisible },
+                            consumeContentTap = { contentTapHandled.also { contentTapHandled = false } },
                         )
                     } else {
                         Modifier.readerEdgeTapNavigation(
@@ -339,6 +356,7 @@ fun ReaderScreen(
                             onPrevious = { state.updateProgress(activeBook.progressPage - 1) },
                             onNext = { state.updateProgress(activeBook.progressPage + 1) },
                             onToggleHud = { state.readerHudVisible = !state.readerHudVisible },
+                            consumeContentTap = { contentTapHandled.also { contentTapHandled = false } },
                         )
                     },
             ),
@@ -408,6 +426,14 @@ fun ReaderScreen(
                                     lineHeightExtra = state.lineHeightExtra,
                                     theme = state.readerTheme,
                                     onNavigateToPage = { state.updateProgress(it) },
+                                    onLink = { link ->
+                                        contentTapHandled = true
+                                        when {
+                                            link.kind == ReaderLinkKind.NoteReference && link.navigationPage != null -> activeNote = link
+                                            link.kind == ReaderLinkKind.External -> externalLink = link.href
+                                            link.navigationPage != null -> state.updateProgress(link.navigationPage)
+                                        }
+                                    },
                                 )
                             } else {
                                 Text(
@@ -439,6 +465,27 @@ fun ReaderScreen(
                 contentAlignment = if (useDesktopTextLayout) Alignment.TopCenter else Alignment.Center,
                 label = "readerPageTransition",
                 content = { pageNumber -> pageContentSlot(pageNumber) },
+            )
+        }
+
+        activeNote?.let { link ->
+            AlertDialog(
+                onDismissRequest = { activeNote = null },
+                title = { Text("Nota") },
+                text = { Text(readerDocument.noteTextFor(link) ?: "No se pudo encontrar el texto de esta nota.") },
+                confirmButton = {
+                    link.navigationPage?.let { page -> TextButton(onClick = { activeNote = null; state.updateProgress(page) }) { Text("Ir a la nota") } }
+                },
+                dismissButton = { TextButton(onClick = { activeNote = null }) { Text("Cerrar") } },
+            )
+        }
+        externalLink?.let { url ->
+            AlertDialog(
+                onDismissRequest = { externalLink = null },
+                title = { Text("Abrir enlace externo") },
+                text = { Text(url) },
+                confirmButton = { TextButton(onClick = { runCatching { uriHandler.openUri(url) }; externalLink = null }) { Text("Abrir") } },
+                dismissButton = { TextButton(onClick = { externalLink = null }) { Text("Cancelar") } },
             )
         }
 
@@ -844,6 +891,7 @@ private fun ReaderTextPage(
     lineHeightExtra: Int,
     theme: ReaderTheme,
     onNavigateToPage: ((Int) -> Unit)?,
+    onLink: ((ReaderInlineLink) -> Unit)? = null,
 ) {
     val blocks = page.blocks
     blocks.forEachIndexed { index, block ->
@@ -864,22 +912,25 @@ private fun ReaderTextPage(
                 textDecoration = navigationDecoration,
                 modifier = blockSpacingModifier.then(navigationModifier).padding(bottom = 4.dp),
             )
-            ReaderContentKind.ListItem -> Text(
-                text = block.text,
+            ReaderContentKind.ListItem -> ReaderLinkedText(
+                block = block,
                 color = navigationColor,
                 fontSize = fontSize.sp,
                 lineHeight = (fontSize + lineHeightExtra).sp,
                 textDecoration = navigationDecoration,
+                textAlign = TextAlign.Start,
                 modifier = blockSpacingModifier.then(navigationModifier).padding(start = 6.dp),
+                onLink = onLink,
             )
-            ReaderContentKind.Paragraph -> Text(
-                text = block.text,
+            ReaderContentKind.Paragraph -> ReaderLinkedText(
+                block = block,
                 color = navigationColor,
                 fontSize = fontSize.sp,
                 lineHeight = (fontSize + lineHeightExtra).sp,
                 textAlign = if (block.navigationPage != null) TextAlign.Start else TextAlign.Justify,
                 textDecoration = navigationDecoration,
                 modifier = blockSpacingModifier.then(navigationModifier),
+                onLink = onLink,
             )
             ReaderContentKind.Quote -> Card(
                 modifier = blockSpacingModifier.fillMaxWidth(),
@@ -918,6 +969,51 @@ private fun ReaderTextPage(
         }
     }
 }
+
+@Composable
+private fun ReaderLinkedText(
+    block: ReaderContentBlock,
+    color: androidx.compose.ui.graphics.Color,
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    lineHeight: androidx.compose.ui.unit.TextUnit,
+    textAlign: TextAlign,
+    textDecoration: TextDecoration?,
+    modifier: Modifier,
+    onLink: ((ReaderInlineLink) -> Unit)?,
+) {
+    val linkColor = MaterialTheme.colorScheme.primary
+    val annotated = remember(block) {
+        buildAnnotatedString {
+            append(block.text)
+            block.inlineLinks.forEachIndexed { index, link ->
+                val actionable = link.navigationPage != null || link.kind == ReaderLinkKind.External
+                if (actionable && link.start in 0 until link.end && link.end <= block.text.length) {
+                    addStringAnnotation("reader-link", index.toString(), link.start, link.end)
+                    addStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline), link.start, link.end)
+                }
+            }
+        }
+    }
+    ClickableText(
+        text = annotated,
+        style = TextStyle(color = color, fontSize = fontSize, lineHeight = lineHeight, textAlign = textAlign, textDecoration = textDecoration),
+        modifier = modifier,
+    ) { offset ->
+        val annotation = annotated.getStringAnnotations("reader-link", offset, offset).firstOrNull() ?: return@ClickableText
+        block.inlineLinks.getOrNull(annotation.item.toIntOrNull() ?: -1)?.let { link -> onLink?.invoke(link) }
+    }
+}
+
+private fun ReaderDocument?.noteTextFor(link: ReaderInlineLink): String? {
+    val page = pagesOrNull(link.navigationPage) ?: return null
+    val anchor = link.targetAnchorId?.lowercase()
+    return page.blocks.firstOrNull { block -> anchor != null && block.anchorId?.lowercase() == anchor }
+        ?.text
+        ?: page.blocks.firstOrNull { it.text.isNotBlank() }?.text
+}
+
+private fun ReaderDocument?.pagesOrNull(pageNumber: Int?): ReaderPage? =
+    pageNumber?.let { number -> this?.pages?.getOrNull(number - 1) }
 
 private fun blockTopSpacing(previous: ReaderContentBlock?, current: ReaderContentBlock): Dp {
     if (previous == null) return 0.dp
@@ -1361,6 +1457,7 @@ private fun Modifier.readerTapNavigation(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onToggleHud: () -> Unit,
+    consumeContentTap: () -> Boolean,
 ): Modifier = pointerInput(page, totalPages) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
@@ -1380,7 +1477,7 @@ private fun Modifier.readerTapNavigation(
             upX = change.position.x
         } while (event.changes.any { it.pressed })
 
-        if (isTap) {
+        if (isTap && !consumeContentTap()) {
             val third = size.width / 3f
             when {
                 upX < third && page > 1 -> onPrevious()
@@ -1397,6 +1494,7 @@ private fun Modifier.readerEdgeTapNavigation(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onToggleHud: () -> Unit,
+    consumeContentTap: () -> Boolean,
 ): Modifier = pointerInput(page, totalPages) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
@@ -1416,7 +1514,7 @@ private fun Modifier.readerEdgeTapNavigation(
             upX = change.position.x
         } while (event.changes.any { it.pressed })
 
-        if (isTap) {
+        if (isTap && !consumeContentTap()) {
             val edgeWidth = size.width * 0.16f
             when {
                 upX < edgeWidth && page > 1 -> onPrevious()

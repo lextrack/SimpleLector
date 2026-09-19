@@ -50,7 +50,19 @@ data class ReaderContentBlock(
     val navigationBasePath: String? = null,
     val navigationHref: String? = null,
     val navigationPage: Int? = null,
+    val inlineLinks: List<ReaderInlineLink> = emptyList(),
 )
+
+data class ReaderInlineLink(
+    val start: Int,
+    val end: Int,
+    val href: String,
+    val kind: ReaderLinkKind = ReaderLinkKind.Internal,
+    val navigationPage: Int? = null,
+    val targetAnchorId: String? = null,
+)
+
+enum class ReaderLinkKind { NoteReference, Backlink, Internal, External }
 
 enum class ReaderContentKind {
     Heading,

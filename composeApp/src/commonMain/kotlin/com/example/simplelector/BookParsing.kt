@@ -387,7 +387,7 @@ fun htmlToReaderBlocks(
     resolveImage: (String) -> ByteArray?,
 ): List<ReaderContentBlock> {
     val imageBlocks = linkedMapOf<String, ReaderContentBlock>()
-    val navigationLinks = linkedMapOf<String, String>()
+    val navigationLinks = linkedMapOf<String, ReaderInlineLink>()
     var anchorIndex = 0
     var imageIndex = 0
     var linkIndex = 0
@@ -402,7 +402,7 @@ fun htmlToReaderBlocks(
             val token = "[[ANCHOR_$anchorIndex]]"
             anchorIndex += 1
             if (anchorId.isNotBlank()) {
-                navigationLinks[token] = "#$anchorId"
+                navigationLinks[token] = ReaderInlineLink(0, 0, "#$anchorId")
                 "$token${match.value}"
             } else {
                 match.value
@@ -415,7 +415,7 @@ fun htmlToReaderBlocks(
             val endToken = "[[ENDLINK_$linkIndex]]"
             linkIndex += 1
             if (href.isNotBlank()) {
-                navigationLinks[token] = href
+                navigationLinks[token] = ReaderInlineLink(0, 0, href, htmlLinkKind(attributes, href))
             }
             "$token${match.groupValues[2]}$endToken"
         }
@@ -480,10 +480,34 @@ fun htmlToReaderBlocks(
             ReaderContentBlock(
                 kind = kind,
                 text = cleanedText,
-                anchorId = anchorToken?.let(navigationLinks::get)?.removePrefix("#"),
-                navigationHref = linkToken?.let(navigationLinks::get),
+                anchorId = anchorToken?.let(navigationLinks::get)?.href?.removePrefix("#"),
+                navigationHref = linkToken?.let(navigationLinks::get)?.href,
+                inlineLinks = extractInlineLinks(block, cleanedText, navigationLinks),
             )
         }
+}
+
+private fun htmlLinkKind(attributes: String, href: String): ReaderLinkKind {
+    val semantics = listOfNotNull(extractHtmlAttribute(attributes, "epub:type"), extractHtmlAttribute(attributes, "role"), extractHtmlAttribute(attributes, "class"))
+        .joinToString(" ").lowercase()
+    return when {
+        "noteref" in semantics || "doc-noteref" in semantics -> ReaderLinkKind.NoteReference
+        "backlink" in semantics || "doc-backlink" in semantics -> ReaderLinkKind.Backlink
+        href.startsWith("https://", ignoreCase = true) || href.startsWith("http://", ignoreCase = true) -> ReaderLinkKind.External
+        else -> ReaderLinkKind.Internal
+    }
+}
+
+private fun extractInlineLinks(raw: String, cleanedText: String, links: Map<String, ReaderInlineLink>): List<ReaderInlineLink> {
+    var cursor = 0
+    return Regex("""\[\[LINK_(\d+)]](.*?)\[\[ENDLINK_\1]]""", RegexOption.DOT_MATCHES_ALL).findAll(raw).mapNotNull { match ->
+        val token = "[[LINK_${match.groupValues[1]}]]"
+        val link = links[token] ?: return@mapNotNull null
+        val label = match.groupValues[2].replace(Regex("""\[\[(?:ANCHOR|LINK|ENDLINK)_\d+]]"""), "").trim()
+        val start = cleanedText.indexOf(label, cursor).takeIf { it >= 0 } ?: return@mapNotNull null
+        cursor = start + label.length
+        link.copy(start = start, end = cursor)
+    }.toList()
 }
 
 fun readerTextFromBlocks(blocks: List<ReaderContentBlock>): String =

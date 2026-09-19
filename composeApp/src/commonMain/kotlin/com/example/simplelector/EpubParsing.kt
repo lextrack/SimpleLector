@@ -139,13 +139,7 @@ fun buildReaderDocumentFromEpub(
     val document = buildReaderDocumentFromSectionSources(
         sections = parsed.sections.map { section ->
             section.copy(
-                blocks = section.blocks.map { block ->
-                    block.copy(
-                        navigationBasePath = null,
-                        navigationHref = null,
-                        navigationPage = null,
-                    )
-                },
+                blocks = section.blocks,
             )
         },
         navigationEntries = parsed.navigationEntries,
@@ -168,7 +162,12 @@ private fun ReaderDocument.reconcileWithDeclaredEpubPageCount(declaredPageCount:
         val blocks = pages.subList(start, end).flatMap { page -> page.blocks }
         buildReaderPage(blocks).copy(
             blocks = blocks.map { block ->
-                block.navigationPage?.let { page -> block.copy(navigationPage = remapPage(page)) } ?: block
+                block.copy(
+                    navigationPage = block.navigationPage?.let(remapPage),
+                    inlineLinks = block.inlineLinks.map { link ->
+                        link.copy(navigationPage = link.navigationPage?.let(remapPage))
+                    },
+                )
             },
         )
     }
@@ -316,11 +315,19 @@ fun buildReaderDocumentFromSectionSources(
         page.copy(
             blocks = page.blocks.map { block ->
                 val targetPage = block.navigationHref
+                    ?.takeIf { block.inlineLinks.isEmpty() }
                     ?.let { href -> resolveEpubNavigationPage(href, block, sectionStartPages, anchorPages) }
+                val resolvedInlineLinks = block.inlineLinks.map { link ->
+                    val page = if (link.kind == ReaderLinkKind.External) null else resolveEpubNavigationPage(link.href, block, sectionStartPages, anchorPages)
+                    link.copy(
+                        navigationPage = page,
+                        targetAnchorId = link.href.substringAfter('#', "").takeIf { it.isNotBlank() },
+                    )
+                }
                 if (targetPage != null) {
-                    block.copy(navigationPage = targetPage)
+                    block.copy(navigationPage = targetPage, inlineLinks = resolvedInlineLinks)
                 } else {
-                    block
+                    block.copy(inlineLinks = resolvedInlineLinks)
                 }
             },
         )

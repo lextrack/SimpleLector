@@ -235,4 +235,71 @@ class BookParsingTest {
 
         assertEquals(3, epub.declaredPageCount)
     }
+
+    @Test
+    fun htmlToReaderBlocks_preservesMultipleInlineLinksAndNoteSemantics() {
+        val block = htmlToReaderBlocks(
+            "<p>Texto<a epub:type=\"noteref\" href=\"#n1\">1</a> y <a href=\"chapter.xhtml#x\">ver</a>.</p>",
+            resolveImage = { null },
+        ).single()
+
+        assertEquals("Texto1 y ver.", block.text)
+        assertEquals(2, block.inlineLinks.size)
+        assertEquals(ReaderLinkKind.NoteReference, block.inlineLinks[0].kind)
+        assertEquals("1", block.text.substring(block.inlineLinks[0].start, block.inlineLinks[0].end))
+        assertEquals("ver", block.text.substring(block.inlineLinks[1].start, block.inlineLinks[1].end))
+    }
+
+    @Test
+    fun buildReaderDocumentFromEpub_resolvesInlineLinkInContentsList() {
+        val document = buildReaderDocumentFromEpub(
+            ParsedEpub(
+                title = "Prueba",
+                author = null,
+                coverEntryPath = null,
+                sections = listOf(
+                    ReaderSectionSource(
+                        path = "toc.xhtml",
+                        title = "Indice",
+                        blocks = listOf(
+                            ReaderContentBlock(
+                                kind = ReaderContentKind.ListItem,
+                                text = "Capitulo 1",
+                                navigationBasePath = "toc.xhtml",
+                                inlineLinks = listOf(ReaderInlineLink(0, 10, "chapter.xhtml#one")),
+                            ),
+                        ),
+                    ),
+                    ReaderSectionSource(
+                        path = "chapter.xhtml",
+                        title = "Capitulo 1",
+                        blocks = listOf(ReaderContentBlock(ReaderContentKind.Heading, "Capitulo 1", anchorId = "one")),
+                    ),
+                ),
+            ),
+            pageWeightLimit = 1,
+        )
+
+        assertEquals(2, document.pages[0].blocks.first().inlineLinks.single().navigationPage)
+    }
+
+    @Test
+    fun buildReaderDocumentFromEpub_remapsContentsLinksWithDeclaredPageCount() {
+        val document = buildReaderDocumentFromEpub(
+            ParsedEpub(
+                title = "Prueba", author = null, coverEntryPath = null, declaredPageCount = 2,
+                sections = listOf(
+                    ReaderSectionSource("book.xhtml", null, listOf(
+                        ReaderContentBlock(ReaderContentKind.ListItem, "Ir", navigationBasePath = "book.xhtml", inlineLinks = listOf(ReaderInlineLink(0, 2, "#last"))),
+                        ReaderContentBlock(ReaderContentKind.Paragraph, "Dos"),
+                        ReaderContentBlock(ReaderContentKind.Paragraph, "Tres"),
+                        ReaderContentBlock(ReaderContentKind.Heading, "Cuatro", anchorId = "last"),
+                    )),
+                ),
+            ),
+            pageWeightLimit = 1,
+        )
+
+        assertEquals(2, document.pages[0].blocks.first().inlineLinks.single().navigationPage)
+    }
 }
