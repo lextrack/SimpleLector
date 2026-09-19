@@ -422,11 +422,25 @@ class SimpleLectorState {
         val index = books.indexOfFirst { it.id == bookId }
         if (index >= 0) {
             val book = books[index]
+            val resolvedTotalPages = totalPages.coerceAtLeast(1)
             books[index] = book.copy(
-                totalPages = totalPages.coerceAtLeast(1),
-                progressPage = book.progressPage.coerceIn(1, totalPages.coerceAtLeast(1)),
+                totalPages = resolvedTotalPages,
+                progressPage = book.progressPage.coerceIn(1, resolvedTotalPages),
                 hasRealPageCount = true,
             )
+            val restoredBookmarks = readerBookmarks[bookId].orEmpty()
+            val validBookmarks = restoredBookmarks
+                .map { bookmark -> bookmark.copy(page = bookmark.page.coerceIn(1, resolvedTotalPages)) }
+                .distinctBy { it.page }
+                .sortedBy { it.page }
+            if (validBookmarks != restoredBookmarks) {
+                if (validBookmarks.isEmpty()) {
+                    readerBookmarks.remove(bookId)
+                } else {
+                    readerBookmarks[bookId] = validBookmarks
+                }
+                notifyBookmarksChanged()
+            }
             notifyProgressChanged()
         }
     }

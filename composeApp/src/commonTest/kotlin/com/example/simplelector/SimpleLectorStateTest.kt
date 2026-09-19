@@ -115,6 +115,26 @@ class SimpleLectorStateTest {
     }
 
     @Test
+    fun savedBookmarks_keepTheirPageUntilTheBookHasARealPageCount() {
+        val state = SimpleLectorState()
+        val unresolvedBook = book(id = "/library/book.epub", folder = "/library")
+        state.hydrateLibrarySnapshot(
+            listOf(scannedFolder("/library", "/library", listOf(unresolvedBook))),
+        )
+
+        state.applySavedBookmarks(
+            listOf(ReaderBookmark(unresolvedBook.id, unresolvedBook.signature, 22, "Capítulo")),
+        )
+        assertEquals(22, state.bookmarksForBook(unresolvedBook).single().page)
+
+        state.updateLoadedBook(unresolvedBook.id, totalPages = 30)
+        assertEquals(22, state.bookmarksForBook(unresolvedBook).single().page)
+
+        state.updateLoadedBook(unresolvedBook.id, totalPages = 10)
+        assertEquals(10, state.bookmarksForBook(unresolvedBook).single().page)
+    }
+
+    @Test
     fun libraryListPosition_isStoredAndClearedWithAppData() {
         val state = SimpleLectorState()
 

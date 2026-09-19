@@ -6,11 +6,16 @@ fun SimpleLectorState.applySavedBookmarks(bookmarks: List<ReaderBookmark>) {
     val currentBooksBySignature = books.associateBy { it.signature }
     bookmarks.forEach { bookmark ->
         val resolvedBook = currentBooksById[bookmark.bookId] ?: currentBooksBySignature[bookmark.signature] ?: return@forEach
-        val totalPages = resolvedBook.totalPages.coerceAtLeast(1)
         val resolvedBookmark = bookmark.copy(
             bookId = resolvedBook.id,
             signature = resolvedBook.signature,
-            page = bookmark.page.coerceIn(1, totalPages),
+            // A newly scanned reflowable book may still report one placeholder
+            // page. Preserve the saved location until its document is loaded.
+            page = if (resolvedBook.hasRealPageCount) {
+                bookmark.page.coerceIn(1, resolvedBook.totalPages.coerceAtLeast(1))
+            } else {
+                bookmark.page.coerceAtLeast(1)
+            },
         )
         val updated = (readerBookmarks[resolvedBook.id].orEmpty() + resolvedBookmark)
             .distinctBy { it.page }

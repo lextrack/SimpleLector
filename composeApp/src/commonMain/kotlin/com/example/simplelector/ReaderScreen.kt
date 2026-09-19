@@ -109,6 +109,7 @@ import androidx.compose.foundation.layout.width
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import kotlinx.coroutines.launch
 import kotlin.math.min
@@ -171,12 +172,14 @@ fun ReaderScreen(
     val useDesktopTextLayout = isDesktopPlatform() && !isZoomableVisualBook
     val readerFocusRequester = remember(activeBook.id) { FocusRequester() }
     var jumpToPage by remember(activeBook.id) { mutableStateOf(activeBook.progressPage.toString()) }
+    var isPageJumpEditing by remember(activeBook.id) { mutableStateOf(false) }
     var readerPanel by remember(activeBook.id) { mutableStateOf(ReaderPanel.None) }
     var searchQuery by remember(activeBook.id) { mutableStateOf("") }
     var visualZoomLevel by remember(activeBook.id) { mutableFloatStateOf(1f) }
     var bookmarkFeedback by remember(activeBook.id) { mutableStateOf<String?>(null) }
     var activeNote by remember(activeBook.id) { mutableStateOf<ReaderInlineLink?>(null) }
     var externalLink by remember(activeBook.id) { mutableStateOf<String?>(null) }
+    var readerHudActivity by remember(activeBook.id) { mutableStateOf(0) }
     val uriHandler = LocalUriHandler.current
     val allowFullTapNavigation = !isZoomableVisualBook || visualZoomLevel <= 1.01f
     LaunchedEffect(activeBook.progressPage) {
@@ -194,8 +197,10 @@ fun ReaderScreen(
             bookmarkFeedback = null
         }
     }
-    LaunchedEffect(activeBook.id, state.readerHudVisible, readerPanel) {
-        if (state.readerHudVisible && readerPanel == ReaderPanel.None) {
+    LaunchedEffect(activeBook.id, state.readerHudVisible, readerHudActivity, isPageJumpEditing) {
+        // On Android, the page field keeps focus while the software keyboard is
+        // open. Do not dismiss its UI midway through text entry.
+        if (state.readerHudVisible && !isPageJumpEditing) {
             delay(7_000)
             state.readerHudVisible = false
         }
@@ -245,6 +250,7 @@ fun ReaderScreen(
     ) {
         AnimatedVisibility(
             visible = state.readerHudVisible,
+            modifier = Modifier.readerHudActivityTracker { readerHudActivity += 1 },
             enter = readerHudEnter(),
             exit = readerHudExit(),
             label = "readerTopHud",
@@ -271,7 +277,10 @@ fun ReaderScreen(
                     ) {
                         Text(
                             activeBook.title,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).onFocusChanged { focus ->
+                                isPageJumpEditing = focus.isFocused
+                                if (focus.isFocused) readerHudActivity += 1
+                            },
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -481,6 +490,7 @@ fun ReaderScreen(
 
         AnimatedVisibility(
             visible = state.readerHudVisible && (state.showProgress || state.showPageButtons),
+            modifier = Modifier.readerHudActivityTracker { readerHudActivity += 1 },
             enter = readerHudEnter(),
             exit = readerHudExit(),
             label = "readerBottomHud",
@@ -574,7 +584,10 @@ fun ReaderScreen(
                     ) {
                         OutlinedTextField(
                             value = jumpToPage,
-                            onValueChange = { value -> jumpToPage = value.filter(Char::isDigit).take(6) },
+                            onValueChange = { value ->
+                                readerHudActivity += 1
+                                jumpToPage = value.filter(Char::isDigit).take(6)
+                            },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                             label = { Text(strings.jumpToPage) },
@@ -587,7 +600,10 @@ fun ReaderScreen(
                         )
                         Button(
                             onClick = {
-                                jumpToPage.toIntOrNull()?.let(state::updateProgress)
+                                jumpToPage.toIntOrNull()?.let { page ->
+                                    state.updateProgress(page)
+                                    jumpToPage = state.selectedBook?.progressPage?.toString().orEmpty()
+                                }
                             },
                         ) {
                             Text(strings.go)
@@ -834,7 +850,10 @@ private fun ReaderBookmarksList(
         Text(strings.noBookmarksYet, color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         items(bookmarks, key = { "${it.bookId}-${it.page}" }) { bookmark ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -870,9 +889,12 @@ private fun ReaderSearchPanel(
     when {
         query.isBlank() -> Text(strings.searchHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
         results.isEmpty() -> Text(strings.noSearchResults, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        else -> LazyColumn(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             items(results, key = { "${it.page}-${it.preview}" }) { result ->
-                TextButton(onClick = { onGoToPage(result.page) }) {
+                TextButton(onClick = { onGoToPage(result.page) }, modifier = Modifier.fillMaxWidth()) {
                     Text(strings.searchResultFormat(result.page, result.preview), maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -1619,6 +1641,20 @@ private fun Modifier.readerHideHudOnMouseWheel(
             val event = awaitPointerEvent()
             if (event.type == PointerEventType.Scroll) {
                 onReadingMotion()
+            }
+        }
+    }
+}
+
+/** Any pointer activity over visible reader controls restarts the idle timer. */
+private fun Modifier.readerHudActivityTracker(
+    onActivity: () -> Unit,
+): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) {
+            val event = awaitPointerEvent()
+            if (event.changes.any { it.pressed } || event.type == PointerEventType.Scroll) {
+                onActivity()
             }
         }
     }
