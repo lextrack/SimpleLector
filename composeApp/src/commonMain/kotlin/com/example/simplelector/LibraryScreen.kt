@@ -16,7 +16,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,15 +27,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
@@ -76,9 +75,7 @@ import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -89,8 +86,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.random.Random
@@ -351,10 +350,29 @@ private fun BookList(
     randomReadRequest: RandomReadRequest?,
     onRandomReadFinished: () -> Unit,
 ) {
-    val searchToken = state.search.trim().lowercase()
-    val animatedKeys = remember(state.libraryAnimationCycle, searchToken) { mutableSetOf<String>() }
-    val listState = rememberLazyListState()
+    val listKey = libraryBooksListKey(state)
+    val savedPosition = state.libraryListPosition(listKey)
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = savedPosition?.firstVisibleItemIndex ?: 0,
+        initialFirstVisibleItemScrollOffset = savedPosition?.firstVisibleItemScrollOffset ?: 0,
+    )
     var highlightedBookId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(listKey, listState) {
+        snapshotFlow {
+            LibraryListPosition(
+                firstVisibleItemIndex = listState.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = listState.firstVisibleItemScrollOffset,
+            )
+        }
+            .distinctUntilChanged()
+            .collect { position ->
+                state.setLibraryListPosition(
+                    key = listKey,
+                    firstVisibleItemIndex = position.firstVisibleItemIndex,
+                    firstVisibleItemScrollOffset = position.firstVisibleItemScrollOffset,
+                )
+            }
+    }
     LaunchedEffect(randomReadRequest?.id, state.filteredBooks) {
         val request = randomReadRequest ?: return@LaunchedEffect
         val targetIndex = state.filteredBooks.indexOfFirst { it.id == request.bookId }
@@ -380,13 +398,13 @@ private fun BookList(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         itemsIndexed(state.filteredBooks, key = { _, it -> it.id }) { index, book ->
-            val animationKey = "book:$searchToken:${book.id}"
             BookRow(
                 state = state,
                 book = book,
                 animationOrder = index,
                 animationCycle = state.libraryAnimationCycle,
-                animateOnFirstAppearance = remember(animationKey) { animatedKeys.add(animationKey) },
+                // Lazy items must be immediately visible when they enter the viewport.
+                animateOnFirstAppearance = false,
                 coverBytes = state.bookCovers[book.id],
                 onLoadCover = onLoadCover,
                 onCoverLoaded = { bytes -> state.setLoadedCover(book.id, bytes) },
@@ -455,11 +473,10 @@ private fun FolderBrowser(
 ) {
     val strings = rememberAppStrings()
     val folderView = state.libraryFolderView
-    val searchToken = state.search.trim().lowercase()
-    val animatedKeys = remember(state.libraryAnimationCycle, folderView.currentPath, searchToken) { mutableSetOf<String>() }
     val listKey = libraryFolderListKey(state, folderView, LibraryPresentationMode.List)
     val savedPosition = state.libraryListPosition(listKey)
     var highlightedBookId by remember { mutableStateOf<String?>(null) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = savedPosition?.firstVisibleItemIndex ?: 0,
         initialFirstVisibleItemScrollOffset = savedPosition?.firstVisibleItemScrollOffset ?: 0,
@@ -511,28 +528,31 @@ private fun FolderBrowser(
                 theme = state.readerTheme,
                 folderView = folderView,
                 onGoUp = { state.navigateBack() },
-                onJumpToBooks = null,
+                onJumpToBooks = folderView.books.takeIf { it.isNotEmpty() }?.let {
+                    { scope.launch { listState.animateScrollToItem(folderView.childFolders.size + 1) } }
+                },
+                onJumpToFolders = folderView.childFolders.takeIf { it.isNotEmpty() }?.let {
+                    { scope.launch { listState.animateScrollToItem(1) } }
+                },
             )
         }
         itemsIndexed(folderView.childFolders, key = { _, it -> it.path }) { index, folder ->
-            val animationKey = "folder:${folderView.currentPath ?: "root"}:$searchToken:${folder.path}"
             FolderRow(
                 theme = state.readerTheme,
                 folder = folder,
                 animationOrder = index,
                 animationCycle = state.libraryAnimationCycle,
-                animateOnFirstAppearance = remember(animationKey) { animatedKeys.add(animationKey) },
+                animateOnFirstAppearance = false,
                 onOpen = { state.openLibraryFolder(folder.path) },
             )
         }
         itemsIndexed(folderView.books, key = { _, it -> it.id }) { index, book ->
-            val animationKey = "book:${folderView.currentPath ?: "root"}:$searchToken:${book.id}"
             BookRow(
                 state = state,
                 book = book,
                 animationOrder = folderView.childFolders.size + index,
                 animationCycle = state.libraryAnimationCycle,
-                animateOnFirstAppearance = remember(animationKey) { animatedKeys.add(animationKey) },
+                animateOnFirstAppearance = false,
                 coverBytes = state.bookCovers[book.id],
                 onLoadCover = onLoadCover,
                 onCoverLoaded = { bytes -> state.setLoadedCover(book.id, bytes) },
@@ -585,7 +605,9 @@ private fun FolderBrowserCarousel(
     LaunchedEffect(randomReadRequest?.id, folderView.childFolders.size, folderView.books.size) {
         val request = randomReadRequest ?: return@LaunchedEffect
         if (folderView.books.none { it.id == request.bookId }) return@LaunchedEffect
-        val booksSectionIndex = if (folderView.childFolders.isNotEmpty()) 2 else 1
+        // Books are the first carousel after the folder summary, so a random
+        // selection never has to jump past a tall folders carousel.
+        val booksSectionIndex = 1
         if (listState.firstVisibleItemIndex < booksSectionIndex) {
             listState.animateScrollToItem(booksSectionIndex)
         }
@@ -599,58 +621,23 @@ private fun FolderBrowserCarousel(
                 theme = state.readerTheme,
                 folderView = folderView,
                 onGoUp = { state.navigateBack() },
-                onJumpToBooks = if (folderView.books.isNotEmpty()) {
-                    {
-                        scope.launch {
-                            listState.animateScrollToItem(
-                                if (folderView.childFolders.isNotEmpty()) 2 else 1,
-                            )
-                        }
-                    }
-                } else {
-                    null
+                onJumpToBooks = folderView.books.takeIf { it.isNotEmpty() }?.let {
+                    { scope.launch { listState.animateScrollToItem(1) } }
                 },
-                jumpToBooksCount = folderView.books.size.takeIf { it > 0 },
+                onJumpToFolders = folderView.childFolders.takeIf { it.isNotEmpty() }?.let {
+                    { scope.launch { listState.animateScrollToItem(if (folderView.books.isNotEmpty()) 2 else 1) } }
+                },
             )
-        }
-        if (folderView.childFolders.isNotEmpty()) {
-            item(key = "folder-carousel-folders") {
-                CarouselSection(
-                    modifier = Modifier.libraryEntryAnimation(
-                        key = "carousel-section:$folderCarouselKey:folders",
-                        order = 0,
-                        animateOnFirstAppearance = true,
-                    ),
-                    title = strings.viewFolders,
-                ) {
-                    HorizontalCarousel(
-                        carouselKey = folderCarouselKey,
-                        initialSelectedIndex = state.carouselSelectionIndex(folderCarouselKey),
-                        onSelectedIndexChange = { state.setCarouselSelectionIndex(folderCarouselKey, it) },
-                        itemCount = folderView.childFolders.size,
-                    ) { index, emphasis, isSelected, onActivate ->
-                        val folder = folderView.childFolders[index]
-                        FolderCarouselCard(
-                            folder = folder,
-                            onOpen = onActivate { state.openLibraryFolder(folder.path) },
-                            emphasis = emphasis,
-                            isSelected = isSelected,
-                            entryAnimationKey = "carousel-item:$folderCarouselKey:${folder.path}",
-                            entryAnimationOrder = index,
-                        )
-                    }
-                }
-            }
         }
         if (folderView.books.isNotEmpty()) {
             item(key = "folder-carousel-books") {
                 CarouselSection(
                     modifier = Modifier.libraryEntryAnimation(
                         key = "carousel-section:$bookCarouselKey:books",
-                        order = if (folderView.childFolders.isNotEmpty()) 1 else 0,
+                        order = 0,
                         animateOnFirstAppearance = true,
                     ),
-                    title = strings.viewBooks,
+                    title = "${strings.booksInCurrentFolder} · ${folderView.books.size}",
                 ) {
                     HorizontalCarousel(
                         carouselKey = bookCarouselKey,
@@ -683,6 +670,35 @@ private fun FolderBrowserCarousel(
                 }
             }
         }
+        if (folderView.childFolders.isNotEmpty()) {
+            item(key = "folder-carousel-folders") {
+                CarouselSection(
+                    modifier = Modifier.libraryEntryAnimation(
+                        key = "carousel-section:$folderCarouselKey:folders",
+                        order = if (folderView.books.isNotEmpty()) 1 else 0,
+                        animateOnFirstAppearance = true,
+                    ),
+                    title = "${strings.viewFolders} · ${folderView.childFolders.size}",
+                ) {
+                    HorizontalCarousel(
+                        carouselKey = folderCarouselKey,
+                        initialSelectedIndex = state.carouselSelectionIndex(folderCarouselKey),
+                        onSelectedIndexChange = { state.setCarouselSelectionIndex(folderCarouselKey, it) },
+                        itemCount = folderView.childFolders.size,
+                    ) { index, emphasis, isSelected, onActivate ->
+                        val folder = folderView.childFolders[index]
+                        FolderCarouselCard(
+                            folder = folder,
+                            onOpen = onActivate { state.openLibraryFolder(folder.path) },
+                            emphasis = emphasis,
+                            isSelected = isSelected,
+                            entryAnimationKey = "carousel-item:$folderCarouselKey:${folder.path}",
+                            entryAnimationOrder = index,
+                        )
+                    }
+                }
+            }
+        }
         if (folderView.childFolders.isEmpty() && folderView.books.isEmpty()) {
             item {
                 Text(strings.noBooksInFolderWithFilters, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -697,7 +713,7 @@ private fun FolderBrowserHeader(
     folderView: LibraryFolderView,
     onGoUp: () -> Unit,
     onJumpToBooks: (() -> Unit)?,
-    jumpToBooksCount: Int? = null,
+    onJumpToFolders: (() -> Unit)?,
 ) {
     val strings = rememberAppStrings()
     val locationSummary = remember(folderView.currentPath, folderView.title, folderView.childFolders.size, folderView.books.size) {
@@ -773,22 +789,16 @@ private fun FolderBrowserHeader(
                     )
                 }
             }
-            if (onJumpToBooks != null) {
-                TextButton(onClick = onJumpToBooks) {
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            strings.jumpToBooks,
-                            maxLines = 1,
-                            textAlign = TextAlign.End,
-                        )
-                        jumpToBooksCount?.let { count ->
-                            Text(
-                                strings.booksBelowHint(count),
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                textAlign = TextAlign.End,
-                            )
+            if (onJumpToBooks != null || onJumpToFolders != null) {
+                Column(horizontalAlignment = Alignment.End) {
+                    onJumpToBooks?.let { jumpToBooks ->
+                        TextButton(onClick = jumpToBooks) {
+                            Text("${strings.viewBooks} · ${folderView.books.size}", maxLines = 1)
+                        }
+                    }
+                    onJumpToFolders?.let { jumpToFolders ->
+                        TextButton(onClick = jumpToFolders) {
+                            Text("${strings.viewFolders} · ${folderView.childFolders.size}", maxLines = 1)
                         }
                     }
                 }
@@ -1025,6 +1035,9 @@ private fun CarouselSection(
 private fun libraryBooksCarouselKey(state: SimpleLectorState): String =
     "books:${state.search.trim().lowercase()}"
 
+private fun libraryBooksListKey(state: SimpleLectorState): String =
+    "books:${state.search.trim().lowercase()}"
+
 private fun libraryFoldersCarouselKey(
     state: SimpleLectorState,
     folderView: LibraryFolderView,
@@ -1056,68 +1069,50 @@ private fun HorizontalCarousel(
     onAnimationRequestHandled: ((CarouselAnimationRequest) -> Unit)? = null,
     itemContent: @Composable (index: Int, emphasis: Float, isSelected: Boolean, onActivate: ((() -> Unit) -> () -> Unit)) -> Unit,
 ) {
-    val scrollState = rememberScrollState()
+    val listState = rememberLazyListState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val density = LocalDensity.current
     val cardWidth = carouselCardWidth()
     val itemSpacing = 14.dp
     var hasRestoredPosition by remember(carouselKey) { mutableStateOf(false) }
     var snapPending by remember(carouselKey) { mutableStateOf(false) }
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val viewportWidthPx = with(density) { maxWidth.toPx() }
-        val cardWidthPx = with(density) { cardWidth.toPx() }
-        val itemSpacingPx = with(density) { itemSpacing.toPx() }
         val sidePadding = ((maxWidth - cardWidth) / 2).coerceAtLeast(0.dp)
-        val sidePaddingPx = with(density) { sidePadding.toPx() }
-        val viewportCenterPx = viewportWidthPx / 2f
-        fun centeredScrollFor(index: Int): Int {
-            return centeredCarouselScrollFor(
-                index = index,
-                itemCount = itemCount,
-                cardWidthPx = cardWidthPx,
-                itemSpacingPx = itemSpacingPx,
-                sidePaddingPx = sidePaddingPx,
-                viewportCenterPx = viewportCenterPx,
-                maxScroll = scrollState.maxValue,
-            )
+        fun nearestIndexForCurrentPosition(): Int {
+            val layoutInfo = listState.layoutInfo
+            val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+            return layoutInfo.visibleItemsInfo
+                .minByOrNull { item -> abs((item.offset + item.size / 2) - viewportCenter) }
+                ?.index
+                ?.coerceIn(0, (itemCount - 1).coerceAtLeast(0))
+                ?: 0
         }
-        fun nearestIndexForCurrentScroll(): Int =
-            nearestCarouselIndexForScroll(
-                scrollValue = scrollState.value,
-                itemCount = itemCount,
-                cardWidthPx = cardWidthPx,
-                itemSpacingPx = itemSpacingPx,
-                sidePaddingPx = sidePaddingPx,
-                viewportCenterPx = viewportCenterPx,
-            )
         suspend fun centerOnIndex(index: Int, animate: Boolean) {
             val safeIndex = index.coerceIn(0, (itemCount - 1).coerceAtLeast(0))
-            val targetScroll = centeredScrollFor(safeIndex)
             onSelectedIndexChange(safeIndex)
             if (animate) {
-                scrollState.animateScrollTo(targetScroll)
+                listState.animateScrollToItem(safeIndex)
             } else {
-                scrollState.scrollTo(targetScroll)
-            }
-            if (scrollState.value != targetScroll) {
-                scrollState.scrollTo(targetScroll)
+                listState.scrollToItem(safeIndex)
             }
         }
-        LaunchedEffect(carouselKey, itemCount, scrollState.maxValue) {
+        LaunchedEffect(carouselKey, itemCount) {
             if (!hasRestoredPosition && itemCount > 0) {
                 centerOnIndex(initialSelectedIndex, animate = false)
                 hasRestoredPosition = true
             }
         }
-        LaunchedEffect(scrollState.isScrollInProgress, hasRestoredPosition, itemCount) {
+        LaunchedEffect(listState, hasRestoredPosition, itemCount) {
             if (!hasRestoredPosition || itemCount <= 0) return@LaunchedEffect
-            if (scrollState.isScrollInProgress) {
-                snapPending = true
-            } else if (snapPending) {
-                snapPending = false
-                val nearestIndex = nearestIndexForCurrentScroll()
-                centerOnIndex(nearestIndex, animate = true)
-            }
+            snapshotFlow { listState.isScrollInProgress }
+                .distinctUntilChanged()
+                .collect { isScrolling ->
+                    if (isScrolling) {
+                        snapPending = true
+                    } else if (snapPending) {
+                        snapPending = false
+                        centerOnIndex(nearestIndexForCurrentPosition(), animate = true)
+                    }
+                }
         }
         LaunchedEffect(animationRequest?.id, hasRestoredPosition, itemCount) {
             val request = animationRequest ?: return@LaunchedEffect
@@ -1125,57 +1120,51 @@ private fun HorizontalCarousel(
             animateCarouselRandomSelection(
                 itemCount = itemCount,
                 targetIndex = request.targetIndex,
-                currentIndex = nearestIndexForCurrentScroll(),
+                currentIndex = nearestIndexForCurrentPosition(),
                 seed = request.id,
                 centerOnIndex = { index, animate -> centerOnIndex(index, animate) },
             )
             onAnimationRequestHandled?.invoke(request)
         }
-        Row(
+        LazyRow(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(scrollState)
-                .pointerInput(carouselKey, itemCount) {
-                    detectDragGestures(
-                        onDragCancel = {
-                            scope.launch {
-                                centerOnIndex(nearestIndexForCurrentScroll(), animate = true)
-                            }
-                        },
-                        onDragEnd = {
-                            scope.launch {
-                                centerOnIndex(nearestIndexForCurrentScroll(), animate = true)
-                            }
-                        },
-                    ) { change, dragAmount ->
-                        change.consume()
-                        scrollState.dispatchRawDelta(-dragAmount.x)
+                .focusable()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown || itemCount <= 0) {
+                        return@onPreviewKeyEvent false
                     }
-                }
-                .padding(horizontal = sidePadding),
+                    val currentIndex = nearestIndexForCurrentPosition()
+                    val targetIndex = when (event.key) {
+                        Key.DirectionLeft -> currentIndex - 1
+                        Key.DirectionRight -> currentIndex + 1
+                        else -> return@onPreviewKeyEvent false
+                    }.coerceIn(0, itemCount - 1)
+                    if (targetIndex != currentIndex) {
+                        scope.launch { centerOnIndex(targetIndex, animate = true) }
+                    }
+                    true
+                },
+            state = listState,
+            contentPadding = PaddingValues(horizontal = sidePadding),
             horizontalArrangement = Arrangement.spacedBy(itemSpacing),
         ) {
-            val itemCenters = List(itemCount) { index ->
-                sidePaddingPx +
-                    index * (cardWidthPx + itemSpacingPx) +
-                    (cardWidthPx / 2f) -
-                    scrollState.value
-            }
-            val closestIndex = itemCenters.indices.minByOrNull { index ->
-                abs(itemCenters[index] - viewportCenterPx)
-            } ?: 0
-            repeat(itemCount) { index ->
-                val itemCenterPx = itemCenters[index]
-                val normalizedDistance = (abs(itemCenterPx - viewportCenterPx) / (cardWidthPx * 1.1f))
-                    .coerceIn(0f, 1f)
-                val baseEmphasis = (1f - normalizedDistance)
+            items(count = itemCount, key = { index -> "$carouselKey:$index" }) { index ->
+                val layoutInfo = listState.layoutInfo
+                val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+                val closestIndex = layoutInfo.visibleItemsInfo
+                    .minByOrNull { item -> abs((item.offset + item.size / 2) - viewportCenter) }
+                    ?.index
+                    ?: initialSelectedIndex.coerceIn(0, (itemCount - 1).coerceAtLeast(0))
+                val itemInfo = layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
+                val normalizedDistance = itemInfo?.let { item ->
+                    (abs((item.offset + item.size / 2) - viewportCenter) / (item.size * 1.1f))
+                        .coerceIn(0f, 1f)
+                } ?: 1f
+                val baseEmphasis = 1f - normalizedDistance
                 val sharpenedEmphasis = baseEmphasis * baseEmphasis * baseEmphasis
                 val isSelected = index == closestIndex
-                val emphasis = if (isSelected) {
-                    0.82f + (sharpenedEmphasis * 0.18f)
-                } else {
-                    sharpenedEmphasis * 0.08f
-                }
+                val emphasis = sharpenedEmphasis
                 val onActivate = { action: () -> Unit ->
                     {
                         scope.launch {
@@ -1292,21 +1281,13 @@ private fun BookCarouselCard(
     entryAnimationOrder: Int,
 ) {
     val strings = rememberAppStrings()
-    val scale by animateFloatAsState(
-        targetValue = if (isSelected) 1f else 0.74f + (emphasis * 0.12f),
-        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
-        label = "bookCarouselScale",
-    )
-    val alpha by animateFloatAsState(
-        targetValue = if (isSelected) 1f else 0.18f + (emphasis * 0.32f),
-        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
-        label = "bookCarouselAlpha",
-    )
-    val translationY by animateFloatAsState(
-        targetValue = if (isSelected) 0f else 34f - (emphasis * 10f),
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
-        label = "bookCarouselTranslationY",
-    )
+    // These values follow the finger directly. Animating them on every scroll
+    // frame makes rapid swipes queue hundreds of overlapping animations.
+    // Keep these values continuous as the card crosses the center.  A binary
+    // selected/unselected scale makes the focused book visibly "jump".
+    val scale = 0.74f + (emphasis * 0.26f)
+    val alpha = 0.18f + (emphasis * 0.82f)
+    val translationY = 34f * (1f - emphasis)
     val cardWidth = carouselCardWidth()
     val coverHeight = carouselCoverHeight()
     Card(
@@ -1314,7 +1295,7 @@ private fun BookCarouselCard(
             .libraryEntryAnimation(
                 key = entryAnimationKey,
                 order = entryAnimationOrder,
-                animateOnFirstAppearance = true,
+                animateOnFirstAppearance = false,
             )
             .width(cardWidth)
             .zIndex(if (isSelected) 1f else 0f)
@@ -1409,21 +1390,10 @@ private fun FolderCarouselCard(
     entryAnimationKey: String,
     entryAnimationOrder: Int,
 ) {
-    val scale by animateFloatAsState(
-        targetValue = if (isSelected) 1f else 0.74f + (emphasis * 0.12f),
-        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
-        label = "folderCarouselScale",
-    )
-    val alpha by animateFloatAsState(
-        targetValue = if (isSelected) 1f else 0.18f + (emphasis * 0.32f),
-        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
-        label = "folderCarouselAlpha",
-    )
-    val translationY by animateFloatAsState(
-        targetValue = if (isSelected) 0f else 34f - (emphasis * 10f),
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
-        label = "folderCarouselTranslationY",
-    )
+    val strings = rememberAppStrings()
+    val scale = 0.74f + (emphasis * 0.26f)
+    val alpha = 0.18f + (emphasis * 0.82f)
+    val translationY = 34f * (1f - emphasis)
     val cardWidth = carouselCardWidth()
     val coverHeight = carouselCoverHeight()
     val iconSize = folderCarouselIconSize()
@@ -1432,7 +1402,7 @@ private fun FolderCarouselCard(
             .libraryEntryAnimation(
                 key = entryAnimationKey,
                 order = entryAnimationOrder,
-                animateOnFirstAppearance = true,
+                animateOnFirstAppearance = false,
             )
             .width(cardWidth)
             .zIndex(if (isSelected) 1f else 0f)
@@ -1479,7 +1449,7 @@ private fun FolderCarouselCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    "${folder.bookCount}",
+                    "${folder.bookCount} ${strings.booksWord}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -1573,7 +1543,9 @@ private fun BookCover(
         }
     }
     val imageBitmap by produceState<ImageBitmap?>(initialValue = null, coverBytes) {
-        value = coverBytes?.toImageBitmapOrNull()
+        value = coverBytes?.let { bytes ->
+            withContext(Dispatchers.Default) { bytes.toImageBitmapOrNull() }
+        }
     }
 
     Box(
