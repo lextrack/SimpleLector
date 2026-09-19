@@ -1063,9 +1063,9 @@ private fun readerLinkAtPosition(
 
 private fun ReaderDocument?.noteTextFor(link: ReaderInlineLink): String? {
     val page = pagesOrNull(link.navigationPage) ?: return null
-    val anchor = link.targetAnchorId?.lowercase()
+    val anchor = link.targetAnchorId
     return page.blocks.firstOrNull { block ->
-        anchor != null && (block.anchorIds + listOfNotNull(block.anchorId)).any { it.lowercase() == anchor }
+        anchor != null && (block.anchorIds + listOfNotNull(block.anchorId)).any { it == anchor }
     }
         ?.text
         ?: page.blocks.firstOrNull { it.text.isNotBlank() }?.text

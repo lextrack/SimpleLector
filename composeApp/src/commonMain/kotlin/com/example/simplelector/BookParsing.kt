@@ -509,7 +509,7 @@ private fun htmlLinkKind(attributes: String, href: String): ReaderLinkKind {
     return when {
         "noteref" in semantics || "doc-noteref" in semantics -> ReaderLinkKind.NoteReference
         "backlink" in semantics || "doc-backlink" in semantics -> ReaderLinkKind.Backlink
-        href.matches(Regex("""^[a-z][a-z0-9+.-]*:""", RegexOption.IGNORE_CASE)) -> ReaderLinkKind.External
+        href.startsWith("//") || href.matches(Regex("""^[a-z][a-z0-9+.-]*:""", RegexOption.IGNORE_CASE)) -> ReaderLinkKind.External
         else -> ReaderLinkKind.Internal
     }
 }

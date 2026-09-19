@@ -29,13 +29,13 @@ data class EpubNavigationEntry(
 
 fun parseEpub(entries: Map<String, ByteArray>): ParsedEpub {
     val normalizedEntries = entries.entries.associate { normalizeArchivePath(it.key) to it.value }
-    val containerXml = normalizedEntries["meta-inf/container.xml"]?.decodeToString()
+    val containerXml = normalizedEntries["meta-inf/container.xml"]?.let(::decodeBookText)
     val rootFile = containerXml
         ?.let(::extractRootFilePath)
         ?.let(::normalizeArchivePath)
 
     val opfPath = rootFile?.takeIf { it in normalizedEntries }
-    val opfXml = opfPath?.let { normalizedEntries[it]?.decodeToString() }
+    val opfXml = opfPath?.let { normalizedEntries[it]?.let(::decodeBookText) }
     val opfDirectory = opfPath?.substringBeforeLast('/', "")
 
     val manifest = opfXml?.let { parseManifest(it, opfDirectory.orEmpty()) }.orEmpty()
@@ -72,7 +72,7 @@ fun parseEpub(entries: Map<String, ByteArray>): ParsedEpub {
     val sections = contentPaths.mapNotNull { path ->
         val bytes = normalizedEntries[path] ?: return@mapNotNull null
         val rawBlocks = if (path.endsWith(".txt")) {
-            bytes.decodeToString()
+            decodeBookText(bytes)
                 .replace("\r\n", "\n")
                 .split(Regex("\\n\\s*\\n"))
                 .mapNotNull { paragraph ->
@@ -81,7 +81,7 @@ fun parseEpub(entries: Map<String, ByteArray>): ParsedEpub {
                         ?.let { ReaderContentBlock(kind = ReaderContentKind.Paragraph, text = it) }
                 }
         } else {
-            htmlToReaderBlocks(bytes.decodeToString()) { rawSource ->
+            htmlToReaderBlocks(decodeBookText(bytes)) { rawSource ->
                 resolveEpubImageBytes(
                     basePath = path.substringBeforeLast('/', ""),
                     rawSource = rawSource,
@@ -608,7 +608,7 @@ internal fun parseNavigationEntries(
 
     navDocumentPaths.forEach { path ->
         val bytes = entries[path] ?: return@forEach
-        val text = bytes.decodeToString()
+        val text = decodeBookText(bytes)
         if (path.endsWith(".ncx")) {
             extractNcxNavigationTitles(text).forEach { (href, title) ->
                 val resolved = normalizeResolvedNavigationTarget(
@@ -648,7 +648,7 @@ internal fun extractEpubDeclaredPageCount(
     manifest.values
         .filter { "nav" in it.properties.lowercase() || it.mediaType == "application/xhtml+xml" || it.mediaType == "application/x-dtbncx+xml" }
         .forEach { item ->
-            val text = entries[item.href]?.decodeToString() ?: return@forEach
+            val text = entries[item.href]?.let(::decodeBookText) ?: return@forEach
             if (item.href.endsWith(".ncx", ignoreCase = true)) {
                 Regex("""<pageTarget\b[^>]*>.*?<content\b[^>]*src\s*=\s*['"]([^'"]+)['"]""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
                     .findAll(text)
@@ -697,9 +697,14 @@ internal fun extractAttribute(attributes: String, name: String): String? =
         ?.getOrNull(1)
 
 internal fun resolveArchivePath(basePath: String, relativePath: String): String {
-    val normalizedRelative = normalizeArchivePath(relativePath)
+    // EPUB href values are URLs. Container entries retain their literal ZIP
+    // names, but URL paths may percent-encode those names (e.g. "chapter%201").
+    val rawPath = relativePath.substringBefore('#').substringBefore('?')
+    val rawFragment = relativePath.substringAfter('#', missingDelimiterValue = "")
+        .takeIf { '#' in relativePath }
+    val normalizedRelative = normalizeArchivePath(decodePercentEncoded(rawPath))
     if (normalizedRelative.startsWith("/")) {
-        return normalizedRelative.removePrefix("/")
+        return normalizedRelative.removePrefix("/") + rawFragment?.let { "#$it" }.orEmpty()
     }
 
     val segments = mutableListOf<String>()
@@ -713,7 +718,7 @@ internal fun resolveArchivePath(basePath: String, relativePath: String): String 
             else -> segments += segment
         }
     }
-    return segments.joinToString("/")
+    return segments.joinToString("/") + rawFragment?.let { "#$it" }.orEmpty()
 }
 
 private fun normalizeResolvedNavigationTarget(path: String, anchorId: String? = null): String {
@@ -731,7 +736,6 @@ private fun normalizeEpubAnchorId(anchorId: String?): String? =
         ?.trim()
         ?.removePrefix("#")
         ?.let(::decodePercentEncoded)
-        ?.lowercase()
         ?.takeIf { it.isNotBlank() }
 
 private fun normalizeResolvedNavigationTarget(href: String): String =

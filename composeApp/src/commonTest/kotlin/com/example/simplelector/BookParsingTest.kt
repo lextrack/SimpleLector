@@ -277,6 +277,39 @@ class BookParsingTest {
     }
 
     @Test
+    fun epubLinksResolvePercentEncodedPathsAndCaseSensitiveFragments() {
+        val document = buildReaderDocumentFromEpub(
+            ParsedEpub(
+                title = "Prueba",
+                author = null,
+                coverEntryPath = null,
+                sections = listOf(
+                    ReaderSectionSource(
+                        path = "toc.xhtml",
+                        title = "Índice",
+                        blocks = listOf(
+                            ReaderContentBlock(
+                                kind = ReaderContentKind.ListItem,
+                                text = "Ir",
+                                navigationBasePath = "toc.xhtml",
+                                inlineLinks = listOf(ReaderInlineLink(0, 2, "chapters/Capítulo%201.xhtml#NotaA")),
+                            ),
+                        ),
+                    ),
+                    ReaderSectionSource(
+                        path = "chapters/Capítulo 1.xhtml",
+                        title = "Capítulo",
+                        blocks = listOf(ReaderContentBlock(ReaderContentKind.Paragraph, "Nota", anchorId = "NotaA")),
+                    ),
+                ),
+            ),
+            pageWeightLimit = 1,
+        )
+
+        assertEquals(2, document.pages.first().blocks.first().inlineLinks.single().navigationPage)
+    }
+
+    @Test
     fun buildReaderDocumentFromEpub_resolvesInlineLinkInContentsList() {
         val document = buildReaderDocumentFromEpub(
             ParsedEpub(
