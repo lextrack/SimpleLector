@@ -147,6 +147,22 @@ class SimpleLectorState {
             readerSidePaddingState = value
             notifyUiPreferencesChanged()
         }
+    private var hasSeenRestoreReaderHudTutorialState by mutableStateOf(false)
+    var hasSeenRestoreReaderHudTutorial: Boolean
+        get() = hasSeenRestoreReaderHudTutorialState
+        set(value) {
+            if (hasSeenRestoreReaderHudTutorialState == value) return
+            hasSeenRestoreReaderHudTutorialState = value
+            notifyUiPreferencesChanged()
+        }
+    private var hasSeenSwipePageTutorialState by mutableStateOf(false)
+    var hasSeenSwipePageTutorial: Boolean
+        get() = hasSeenSwipePageTutorialState
+        set(value) {
+            if (hasSeenSwipePageTutorialState == value) return
+            hasSeenSwipePageTutorialState = value
+            notifyUiPreferencesChanged()
+        }
 
     val selectedBook: Book?
         get() = books.firstOrNull { it.id == selectedBookId }

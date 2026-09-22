@@ -177,8 +177,29 @@ fun ReaderScreen(
     var activeNote by remember(activeBook.id) { mutableStateOf<ReaderInlineLink?>(null) }
     var externalLink by remember(activeBook.id) { mutableStateOf<String?>(null) }
     var readerHudActivity by remember(activeBook.id) { mutableStateOf(0) }
+    var readerTutorial by remember { mutableStateOf<ReaderTutorial?>(null) }
     val uriHandler = LocalUriHandler.current
     val allowFullTapNavigation = !isZoomableVisualBook || visualZoomLevel <= 1.01f
+    val hideReaderHud = {
+        state.readerHudVisible = false
+        if (!state.hasSeenRestoreReaderHudTutorial) {
+            state.hasSeenRestoreReaderHudTutorial = true
+            readerTutorial = ReaderTutorial.RestoreHud
+        }
+    }
+    val showSwipePageTutorial = {
+        if (!state.hasSeenSwipePageTutorial) {
+            state.hasSeenSwipePageTutorial = true
+            readerTutorial = ReaderTutorial.SwipePages
+        }
+    }
+    val dismissReaderTutorial = {
+        if (readerTutorial == ReaderTutorial.RestoreHud) {
+            showSwipePageTutorial()
+        } else {
+            readerTutorial = null
+        }
+    }
     LaunchedEffect(activeBook.progressPage) {
         jumpToPage = activeBook.progressPage.toString()
         readerFocusRequester.requestFocus()
@@ -199,7 +220,7 @@ fun ReaderScreen(
         // open. Do not dismiss its UI midway through text entry.
         if (state.readerHudVisible && !isPageJumpEditing) {
             delay(7_000)
-            state.readerHudVisible = false
+            hideReaderHud()
         }
     }
     val searchResults = remember(readerDocument, searchQuery) {
@@ -353,10 +374,12 @@ fun ReaderScreen(
                     pageNavigationEnabled = allowFullTapNavigation,
                     onPrevious = { state.updateProgress(activeBook.progressPage - 1) },
                     onNext = { state.updateProgress(activeBook.progressPage + 1) },
-                    onToggleHud = { state.readerHudVisible = !state.readerHudVisible },
-                    onReadingMotion = { state.readerHudVisible = false },
+                    onToggleHud = {
+                        if (state.readerHudVisible) hideReaderHud() else state.readerHudVisible = true
+                    },
+                    onReadingMotion = hideReaderHud,
                 )
-                .readerHideHudOnMouseWheel { state.readerHudVisible = false },
+                .readerHideHudOnMouseWheel(hideReaderHud),
             contentAlignment = if (useDesktopTextLayout) Alignment.TopCenter else Alignment.Center,
         ) {
             val pageContentSlot: @Composable (Int) -> Unit = { pageNumber ->
@@ -629,6 +652,29 @@ fun ReaderScreen(
                 }
             }
         }
+    }
+
+    readerTutorial?.let { tutorial ->
+        AlertDialog(
+            onDismissRequest = dismissReaderTutorial,
+            title = {
+                Text(
+                    if (tutorial == ReaderTutorial.RestoreHud) strings.restoreReaderHudTutorialTitle
+                    else strings.swipePageTutorialTitle,
+                )
+            },
+            text = {
+                Text(
+                    if (tutorial == ReaderTutorial.RestoreHud) strings.restoreReaderHudTutorialMessage
+                    else strings.swipePageTutorialMessage,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = dismissReaderTutorial) {
+                    Text(strings.close)
+                }
+            },
+        )
     }
 }
 
@@ -1537,6 +1583,11 @@ private enum class ReaderPanel {
     Chapters,
     Bookmarks,
     Search,
+}
+
+private enum class ReaderTutorial {
+    RestoreHud,
+    SwipePages,
 }
 
 private fun Modifier.readerTapNavigation(

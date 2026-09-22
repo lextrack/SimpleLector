@@ -121,6 +121,10 @@ data class AppStrings(
     val noteNotFound: String,
     val externalLinkTitle: String,
     val openExternalLink: String,
+    val restoreReaderHudTutorialTitle: String,
+    val restoreReaderHudTutorialMessage: String,
+    val swipePageTutorialTitle: String,
+    val swipePageTutorialMessage: String,
 )
 
 @Composable
@@ -305,6 +309,10 @@ private fun spanishStrings(): AppStrings =
         noteNotFound = "No se pudo encontrar el texto de esta nota.",
         externalLinkTitle = "Abrir enlace externo",
         openExternalLink = "Abrir",
+        restoreReaderHudTutorialTitle = "Controles ocultos",
+        restoreReaderHudTutorialMessage = "Toca dos veces cualquier zona vacía de la pantalla para volver a mostrar los controles de lectura.",
+        swipePageTutorialTitle = "Cambiar de página",
+        swipePageTutorialMessage = "Desliza el dedo a la izquierda o a la derecha para cambiar de página.",
     )
 
 private fun frenchStrings(): AppStrings =
@@ -444,6 +452,10 @@ private fun frenchStrings(): AppStrings =
         noteNotFound = "Le texte de cette note est introuvable.",
         externalLinkTitle = "Ouvrir le lien externe",
         openExternalLink = "Ouvrir",
+        restoreReaderHudTutorialTitle = "Commandes masquées",
+        restoreReaderHudTutorialMessage = "Touchez deux fois une zone vide de l’écran pour afficher à nouveau les commandes de lecture.",
+        swipePageTutorialTitle = "Changer de page",
+        swipePageTutorialMessage = "Faites glisser votre doigt vers la gauche ou la droite pour changer de page.",
     )
 
 private fun englishStrings(): AppStrings =
@@ -583,6 +595,10 @@ private fun englishStrings(): AppStrings =
         noteNotFound = "The text for this note could not be found.",
         externalLinkTitle = "Open external link",
         openExternalLink = "Open",
+        restoreReaderHudTutorialTitle = "Controls hidden",
+        restoreReaderHudTutorialMessage = "Double-tap any empty area of the screen to show the reading controls again.",
+        swipePageTutorialTitle = "Change page",
+        swipePageTutorialMessage = "Swipe left or right to change page.",
     )
 
 private fun japaneseStrings(): AppStrings =
@@ -722,6 +738,10 @@ private fun japaneseStrings(): AppStrings =
         noteNotFound = "この注記の本文が見つかりませんでした。",
         externalLinkTitle = "外部リンクを開く",
         openExternalLink = "開く",
+        restoreReaderHudTutorialTitle = "操作メニューを非表示にしました",
+        restoreReaderHudTutorialMessage = "画面の何もない場所をダブルタップすると、読書操作メニューが再び表示されます。",
+        swipePageTutorialTitle = "ページをめくる",
+        swipePageTutorialMessage = "左右にスワイプしてページを移動できます。",
     )
 
 private fun koreanStrings(): AppStrings =
@@ -861,6 +881,10 @@ private fun koreanStrings(): AppStrings =
         noteNotFound = "이 주석의 내용을 찾을 수 없습니다.",
         externalLinkTitle = "외부 링크 열기",
         openExternalLink = "열기",
+        restoreReaderHudTutorialTitle = "컨트롤이 숨겨졌습니다",
+        restoreReaderHudTutorialMessage = "화면의 빈 곳을 두 번 탭하면 읽기 컨트롤을 다시 볼 수 있습니다.",
+        swipePageTutorialTitle = "페이지 넘기기",
+        swipePageTutorialMessage = "왼쪽이나 오른쪽으로 밀어 페이지를 넘길 수 있습니다.",
     )
 
 private fun simplifiedChineseStrings(): AppStrings =
@@ -1000,6 +1024,10 @@ private fun simplifiedChineseStrings(): AppStrings =
         noteNotFound = "找不到此注释的文本。",
         externalLinkTitle = "打开外部链接",
         openExternalLink = "打开",
+        restoreReaderHudTutorialTitle = "控件已隐藏",
+        restoreReaderHudTutorialMessage = "双击屏幕的空白区域即可再次显示阅读控件。",
+        swipePageTutorialTitle = "翻页",
+        swipePageTutorialMessage = "向左或向右滑动即可翻页。",
     )
 
 private fun traditionalChineseStrings(): AppStrings =
@@ -1139,6 +1167,10 @@ private fun traditionalChineseStrings(): AppStrings =
         noteNotFound = "找不到此註解的文字。",
         externalLinkTitle = "開啟外部連結",
         openExternalLink = "開啟",
+        restoreReaderHudTutorialTitle = "控制項已隱藏",
+        restoreReaderHudTutorialMessage = "輕觸螢幕空白處兩下，即可再次顯示閱讀控制項。",
+        swipePageTutorialTitle = "換頁",
+        swipePageTutorialMessage = "向左或向右滑動即可換頁。",
     )
 
 fun AppSection.localizedLabel(strings: AppStrings): String = when (this) {

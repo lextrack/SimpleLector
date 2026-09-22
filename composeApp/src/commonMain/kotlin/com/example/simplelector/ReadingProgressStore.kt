@@ -25,6 +25,8 @@ data class SavedUiPreferences(
     val fontSize: Int,
     val lineHeightExtra: Int,
     val readerSidePadding: Int,
+    val hasSeenRestoreReaderHudTutorial: Boolean = false,
+    val hasSeenSwipePageTutorial: Boolean = false,
 )
 
 fun SimpleLectorState.applySavedProgress(progressItems: List<SavedBookProgress>) {
@@ -69,6 +71,8 @@ fun SimpleLectorState.applySavedUiPreferences(saved: SavedUiPreferences?) {
     fontSize = saved.fontSize
     lineHeightExtra = saved.lineHeightExtra
     readerSidePadding = saved.readerSidePadding
+    hasSeenRestoreReaderHudTutorial = saved.hasSeenRestoreReaderHudTutorial
+    hasSeenSwipePageTutorial = saved.hasSeenSwipePageTutorial
 }
 
 fun SimpleLectorState.currentUiPreferences(): SavedUiPreferences =
@@ -84,6 +88,8 @@ fun SimpleLectorState.currentUiPreferences(): SavedUiPreferences =
         fontSize = fontSize,
         lineHeightExtra = lineHeightExtra,
         readerSidePadding = readerSidePadding,
+        hasSeenRestoreReaderHudTutorial = hasSeenRestoreReaderHudTutorial,
+        hasSeenSwipePageTutorial = hasSeenSwipePageTutorial,
     )
 
 fun SimpleLectorState.savedProgressItems(): List<SavedBookProgress> =
@@ -158,6 +164,8 @@ fun encodeSavedUiPreferences(saved: SavedUiPreferences?): String {
         saved.fontSize.toString(),
         saved.lineHeightExtra.toString(),
         saved.readerSidePadding.toString(),
+        if (saved.hasSeenRestoreReaderHudTutorial) "1" else "0",
+        if (saved.hasSeenSwipePageTutorial) "1" else "0",
     ).joinToString("\t")
 }
 
@@ -197,6 +205,8 @@ fun decodeSavedUiPreferences(raw: String): SavedUiPreferences? {
         fontSize = parts.getOrNull(fontSizeIndex)?.toIntOrNull() ?: 20,
         lineHeightExtra = parts.getOrNull(lineHeightIndex)?.toIntOrNull() ?: 12,
         readerSidePadding = parts.getOrNull(sidePaddingIndex)?.toIntOrNull() ?: 14,
+        hasSeenRestoreReaderHudTutorial = parts.getOrNull(sidePaddingIndex + 1) == "1",
+        hasSeenSwipePageTutorial = parts.getOrNull(sidePaddingIndex + 2) == "1",
     )
 }
 
