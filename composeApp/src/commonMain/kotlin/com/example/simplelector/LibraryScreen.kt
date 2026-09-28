@@ -327,6 +327,13 @@ private fun libraryBackgroundBrush(theme: ReaderTheme): Brush = when (theme) {
             Color(0xFF34241A),
         ),
     )
+    ReaderTheme.PurplePink -> Brush.verticalGradient(
+        colors = listOf(
+            Color(0xFF321C45),
+            Color(0xFF1A1022),
+            Color(0xFF542541),
+        ),
+    )
     ReaderTheme.Sepia -> Brush.verticalGradient(
         colors = listOf(
             Color(0xFFF1E1C1),

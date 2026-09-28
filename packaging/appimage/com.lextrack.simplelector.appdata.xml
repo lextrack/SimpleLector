@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.lextrack.simplelector</id>
+  <name>SimpleLector</name>
+  <summary>Lector personal de libros, documentos y cómics</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="com.lextrack">
+    <name>Lextrack Studios</name>
+  </developer>
+  <description>
+    <p>
+      SimpleLector permite organizar y leer EPUB, PDF, documentos de texto y
+      cómics CBZ o CBR desde una biblioteca local.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.lextrack.simplelector.desktop</launchable>
+  <url type="homepage">https://github.com/lextrack/SimpleLector</url>
+  <provides>
+    <binary>SimpleLector</binary>
+  </provides>
+  <content_rating type="oars-1.1" />
+</component>

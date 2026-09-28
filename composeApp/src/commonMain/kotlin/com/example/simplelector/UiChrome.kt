@@ -31,6 +31,7 @@ fun AppBackButton(
 fun libraryPathFolderColor(theme: ReaderTheme): Color = when (theme) {
     ReaderTheme.Sepia -> Color(0xFF8B4A12)
     ReaderTheme.DarkSepia -> Color(0xFFD29A52)
+    ReaderTheme.PurplePink -> Color(0xFFFFB1D9)
     ReaderTheme.Dark -> Color(0xFF91C4FF)
     ReaderTheme.Light -> MaterialTheme.colorScheme.primary
 }
@@ -39,6 +40,7 @@ fun libraryPathFolderColor(theme: ReaderTheme): Color = when (theme) {
 fun libraryPathFileColor(theme: ReaderTheme): Color = when (theme) {
     ReaderTheme.Sepia -> Color(0xFF473526)
     ReaderTheme.DarkSepia -> Color(0xFFE0C7AA)
+    ReaderTheme.PurplePink -> Color(0xFFF1DCEB)
     ReaderTheme.Dark -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f)
     ReaderTheme.Light -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f)
 }
@@ -47,6 +49,7 @@ fun libraryPathFileColor(theme: ReaderTheme): Color = when (theme) {
 private fun backButtonContainerColor(theme: ReaderTheme): Color = when (theme) {
     ReaderTheme.Sepia -> Color(0xFFB7732F)
     ReaderTheme.DarkSepia -> Color(0xFF8F6130)
+    ReaderTheme.PurplePink -> Color(0xFF7A1557)
     ReaderTheme.Dark -> Color(0xFF314355)
     ReaderTheme.Light -> MaterialTheme.colorScheme.primary
 }
@@ -55,6 +58,7 @@ private fun backButtonContainerColor(theme: ReaderTheme): Color = when (theme) {
 private fun backButtonContentColor(theme: ReaderTheme): Color = when (theme) {
     ReaderTheme.Sepia -> Color(0xFFFFF4DE)
     ReaderTheme.DarkSepia -> Color(0xFFFFEACD)
+    ReaderTheme.PurplePink -> Color(0xFFFFD7EA)
     ReaderTheme.Dark -> Color(0xFFEAF4FF)
     ReaderTheme.Light -> MaterialTheme.colorScheme.onPrimary
 }

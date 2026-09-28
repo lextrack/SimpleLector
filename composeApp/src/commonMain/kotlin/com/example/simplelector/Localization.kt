@@ -13,6 +13,7 @@ data class AppStrings(
     val themeDark: String,
     val themeSepia: String,
     val themeDarkSepia: String,
+    val themePurplePink: String,
     val viewBooks: String,
     val viewFolders: String,
     val addFolder: String,
@@ -181,6 +182,7 @@ private fun spanishStrings(): AppStrings =
         themeDark = "Oscuro",
         themeSepia = "Sepia",
         themeDarkSepia = "Sepia oscuro",
+        themePurplePink = "Morado y rosa",
         viewBooks = "Libros",
         viewFolders = "Carpetas",
         addFolder = "Añadir memoria/carpeta",
@@ -330,6 +332,7 @@ private fun frenchStrings(): AppStrings =
         themeDark = "Sombre",
         themeSepia = "Sepia",
         themeDarkSepia = "Sepia sombre",
+        themePurplePink = "Violet et rose",
         viewBooks = "Livres",
         viewFolders = "Dossiers",
         addFolder = "Ajouter un stockage/dossier",
@@ -475,6 +478,7 @@ private fun englishStrings(): AppStrings =
         themeDark = "Dark",
         themeSepia = "Sepia",
         themeDarkSepia = "Dark sepia",
+        themePurplePink = "Purple and pink",
         viewBooks = "Books",
         viewFolders = "Folders",
         addFolder = "Add storage/folder",
@@ -620,6 +624,7 @@ private fun japaneseStrings(): AppStrings =
         themeDark = "ダーク",
         themeSepia = "セピア",
         themeDarkSepia = "ダークセピア",
+        themePurplePink = "紫とピンク",
         viewBooks = "書籍",
         viewFolders = "フォルダー",
         addFolder = "ストレージ/フォルダーを追加",
@@ -765,6 +770,7 @@ private fun koreanStrings(): AppStrings =
         themeDark = "다크",
         themeSepia = "세피아",
         themeDarkSepia = "다크 세피아",
+        themePurplePink = "보라색과 분홍색",
         viewBooks = "책",
         viewFolders = "폴더",
         addFolder = "저장소 또는 폴더 추가",
@@ -910,6 +916,7 @@ private fun simplifiedChineseStrings(): AppStrings =
         themeDark = "深色",
         themeSepia = "棕褐",
         themeDarkSepia = "深色棕褐",
+        themePurplePink = "紫色和粉色",
         viewBooks = "书籍",
         viewFolders = "文件夹",
         addFolder = "添加存储或文件夹",
@@ -1055,6 +1062,7 @@ private fun traditionalChineseStrings(): AppStrings =
         themeDark = "深色",
         themeSepia = "棕褐",
         themeDarkSepia = "深色棕褐",
+        themePurplePink = "紫色和粉色",
         viewBooks = "書籍",
         viewFolders = "資料夾",
         addFolder = "新增儲存空間或資料夾",
@@ -1200,6 +1208,7 @@ fun ReaderTheme.localizedLabel(strings: AppStrings): String = when (this) {
     ReaderTheme.Dark -> strings.themeDark
     ReaderTheme.Sepia -> strings.themeSepia
     ReaderTheme.DarkSepia -> strings.themeDarkSepia
+    ReaderTheme.PurplePink -> strings.themePurplePink
 }
 
 fun LibraryViewMode.localizedLabel(strings: AppStrings): String = when (this) {

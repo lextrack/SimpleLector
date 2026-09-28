@@ -133,6 +133,7 @@ enum class ReaderTheme {
     Dark,
     Sepia,
     DarkSepia,
+    PurplePink,
 }
 
 enum class LibraryViewMode {

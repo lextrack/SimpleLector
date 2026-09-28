@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SimpleLector
+Comment=Lector de libros simple y multiplataforma
+Exec=SimpleLector
+Icon=simplelector
+Terminal=false
+Categories=Office;
+StartupWMClass=SimpleLector

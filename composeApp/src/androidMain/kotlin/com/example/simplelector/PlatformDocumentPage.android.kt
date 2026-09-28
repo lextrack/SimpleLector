@@ -608,5 +608,6 @@ private fun pdfPageBackgroundColor(theme: ReaderTheme): Int =
         ReaderTheme.Dark -> android.graphics.Color.WHITE
         ReaderTheme.Sepia -> android.graphics.Color.rgb(240, 223, 192)
         ReaderTheme.DarkSepia -> android.graphics.Color.rgb(224, 206, 178)
+        ReaderTheme.PurplePink -> android.graphics.Color.rgb(249, 240, 248)
         ReaderTheme.Light -> android.graphics.Color.rgb(255, 252, 247)
     }

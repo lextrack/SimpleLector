@@ -17,6 +17,7 @@ Windows and Linux builds are available on itch.io.
 - Reading support for `PDF`, `EPUB`, `TXT`, `Markdown`, `CBZ`, and `CBR`
 - Reading progress and last-opened-book restore
 - Bookmarks and reader preferences
+- Inline notes and references in supported books
 - Library browsing, search, and folder navigation
 - Comic and manga reading with Android-native image acceleration for heavy `CBZ` / `CBR` pages
 
@@ -51,7 +52,7 @@ The Android build includes native code for some image-heavy reading paths, so `N
 
 ### Desktop
 
-- JDK 11 or newer
+- JDK 21
 - A system supported by Compose Desktop
 
 ## Run The Project
@@ -84,6 +85,22 @@ Run on Windows:
 
 ```powershell
 .\gradlew.bat :composeApp:run
+```
+
+## Desktop distribution
+
+The desktop CI creates the following packages:
+
+- Windows: `.msi` installer
+- Linux x86_64: portable `.AppImage`
+
+Artifacts produced by GitHub Actions are intended for testing and have the retention period configured by GitHub. They are not automatically published as GitHub Releases.
+
+To run the Linux AppImage after downloading it:
+
+```bash
+chmod +x SimpleLector-*.AppImage
+./SimpleLector-*.AppImage
 ```
 
 ## Notes

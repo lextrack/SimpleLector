@@ -69,7 +69,16 @@ fun App(
         lockRotation = lockRotation,
     )
 
-    MaterialTheme(colorScheme = if (state.readerTheme == ReaderTheme.Dark || state.readerTheme == ReaderTheme.DarkSepia) darkReaderColors(state.readerTheme) else lightReaderColors(state.readerTheme)) {
+    MaterialTheme(colorScheme = if (
+            state.readerTheme == ReaderTheme.Dark ||
+            state.readerTheme == ReaderTheme.DarkSepia ||
+            state.readerTheme == ReaderTheme.PurplePink
+        ) {
+            darkReaderColors(state.readerTheme)
+        } else {
+            lightReaderColors(state.readerTheme)
+        },
+    ) {
         Scaffold(
             modifier = Modifier
                 .background(MaterialTheme.colorScheme.background)
