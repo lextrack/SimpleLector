@@ -107,6 +107,10 @@ actual fun PlatformDocumentPage(
     val visualPageFocusRequester = remember(sourceId, normalizedFormat, pageNumber) { FocusRequester() }
     val scope = rememberCoroutineScope()
     var renderError by remember(sourceId, normalizedFormat, pageNumber, theme) { mutableStateOf<Throwable?>(null) }
+    LaunchedEffect(sourceId, normalizedFormat, pageNumber) {
+        horizontalScrollState.scrollTo(0)
+        verticalScrollState.scrollTo(0)
+    }
     val bitmap by produceState<ImageBitmap?>(initialValue = null, sourceId, normalizedFormat, pageNumber, theme) {
         value = null
         renderError = null
@@ -197,9 +201,10 @@ actual fun PlatformDocumentPage(
                         if (zoomLevel <= 1.01f) return@pointerInput
                         detectDragGestures { change, dragAmount ->
                             change.consume()
+                            val desiredHorizontal = horizontalScrollState.value - dragAmount.x
                             scope.launch {
                                 horizontalScrollState.scrollTo(
-                                    (horizontalScrollState.value - dragAmount.x).roundToInt().coerceIn(0, horizontalScrollState.maxValue),
+                                    desiredHorizontal.roundToInt().coerceIn(0, horizontalScrollState.maxValue),
                                 )
                                 verticalScrollState.scrollTo(
                                     (verticalScrollState.value - dragAmount.y).roundToInt().coerceIn(0, verticalScrollState.maxValue),

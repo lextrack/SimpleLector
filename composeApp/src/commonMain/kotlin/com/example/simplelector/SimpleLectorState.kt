@@ -163,6 +163,14 @@ class SimpleLectorState {
             hasSeenSwipePageTutorialState = value
             notifyUiPreferencesChanged()
         }
+    private var hasSeenZoomPageNavigationTutorialState by mutableStateOf(false)
+    var hasSeenZoomPageNavigationTutorial: Boolean
+        get() = hasSeenZoomPageNavigationTutorialState
+        set(value) {
+            if (hasSeenZoomPageNavigationTutorialState == value) return
+            hasSeenZoomPageNavigationTutorialState = value
+            notifyUiPreferencesChanged()
+        }
 
     val selectedBook: Book?
         get() = books.firstOrNull { it.id == selectedBookId }
@@ -625,6 +633,9 @@ class SimpleLectorState {
         fontSize = 20
         lineHeightExtra = 12
         readerSidePadding = 14
+        hasSeenRestoreReaderHudTutorial = false
+        hasSeenSwipePageTutorial = false
+        hasSeenZoomPageNavigationTutorial = false
         hasCompletedInitialLibraryLoad = false
         libraryAnimationCycle = 0
         invalidateLibraryCaches()

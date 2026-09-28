@@ -27,6 +27,7 @@ data class SavedUiPreferences(
     val readerSidePadding: Int,
     val hasSeenRestoreReaderHudTutorial: Boolean = false,
     val hasSeenSwipePageTutorial: Boolean = false,
+    val hasSeenZoomPageNavigationTutorial: Boolean = false,
 )
 
 fun SimpleLectorState.applySavedProgress(progressItems: List<SavedBookProgress>) {
@@ -73,6 +74,7 @@ fun SimpleLectorState.applySavedUiPreferences(saved: SavedUiPreferences?) {
     readerSidePadding = saved.readerSidePadding
     hasSeenRestoreReaderHudTutorial = saved.hasSeenRestoreReaderHudTutorial
     hasSeenSwipePageTutorial = saved.hasSeenSwipePageTutorial
+    hasSeenZoomPageNavigationTutorial = saved.hasSeenZoomPageNavigationTutorial
 }
 
 fun SimpleLectorState.currentUiPreferences(): SavedUiPreferences =
@@ -90,6 +92,7 @@ fun SimpleLectorState.currentUiPreferences(): SavedUiPreferences =
         readerSidePadding = readerSidePadding,
         hasSeenRestoreReaderHudTutorial = hasSeenRestoreReaderHudTutorial,
         hasSeenSwipePageTutorial = hasSeenSwipePageTutorial,
+        hasSeenZoomPageNavigationTutorial = hasSeenZoomPageNavigationTutorial,
     )
 
 fun SimpleLectorState.savedProgressItems(): List<SavedBookProgress> =
@@ -166,6 +169,7 @@ fun encodeSavedUiPreferences(saved: SavedUiPreferences?): String {
         saved.readerSidePadding.toString(),
         if (saved.hasSeenRestoreReaderHudTutorial) "1" else "0",
         if (saved.hasSeenSwipePageTutorial) "1" else "0",
+        if (saved.hasSeenZoomPageNavigationTutorial) "1" else "0",
     ).joinToString("\t")
 }
 
@@ -207,6 +211,7 @@ fun decodeSavedUiPreferences(raw: String): SavedUiPreferences? {
         readerSidePadding = parts.getOrNull(sidePaddingIndex)?.toIntOrNull() ?: 14,
         hasSeenRestoreReaderHudTutorial = parts.getOrNull(sidePaddingIndex + 1) == "1",
         hasSeenSwipePageTutorial = parts.getOrNull(sidePaddingIndex + 2) == "1",
+        hasSeenZoomPageNavigationTutorial = parts.getOrNull(sidePaddingIndex + 3) == "1",
     )
 }
 

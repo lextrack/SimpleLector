@@ -125,6 +125,8 @@ data class AppStrings(
     val restoreReaderHudTutorialMessage: String,
     val swipePageTutorialTitle: String,
     val swipePageTutorialMessage: String,
+    val zoomPageNavigationTutorialTitle: String,
+    val zoomPageNavigationTutorialMessage: String,
 )
 
 @Composable
@@ -313,6 +315,8 @@ private fun spanishStrings(): AppStrings =
         restoreReaderHudTutorialMessage = "Toca dos veces cualquier zona vacía de la pantalla para volver a mostrar los controles de lectura.",
         swipePageTutorialTitle = "Cambiar de página",
         swipePageTutorialMessage = "Desliza el dedo a la izquierda o a la derecha para cambiar de página.",
+        zoomPageNavigationTutorialTitle = "Cambiar de página con zoom",
+        zoomPageNavigationTutorialMessage = "Usa las flechas laterales para cambiar de página sin quitar el zoom. El arrastre se detiene en los bordes de la imagen.",
     )
 
 private fun frenchStrings(): AppStrings =
@@ -456,6 +460,8 @@ private fun frenchStrings(): AppStrings =
         restoreReaderHudTutorialMessage = "Touchez deux fois une zone vide de l’écran pour afficher à nouveau les commandes de lecture.",
         swipePageTutorialTitle = "Changer de page",
         swipePageTutorialMessage = "Faites glisser votre doigt vers la gauche ou la droite pour changer de page.",
+        zoomPageNavigationTutorialTitle = "Changer de page avec le zoom",
+        zoomPageNavigationTutorialMessage = "Utilisez les flèches latérales pour changer de page sans quitter le zoom. Le déplacement s’arrête aux bords de l’image.",
     )
 
 private fun englishStrings(): AppStrings =
@@ -599,6 +605,8 @@ private fun englishStrings(): AppStrings =
         restoreReaderHudTutorialMessage = "Double-tap any empty area of the screen to show the reading controls again.",
         swipePageTutorialTitle = "Change page",
         swipePageTutorialMessage = "Swipe left or right to change page.",
+        zoomPageNavigationTutorialTitle = "Change page while zoomed",
+        zoomPageNavigationTutorialMessage = "Use the side arrows to change page without resetting zoom. Panning stops at the image edges.",
     )
 
 private fun japaneseStrings(): AppStrings =
@@ -742,6 +750,8 @@ private fun japaneseStrings(): AppStrings =
         restoreReaderHudTutorialMessage = "画面の何もない場所をダブルタップすると、読書操作メニューが再び表示されます。",
         swipePageTutorialTitle = "ページをめくる",
         swipePageTutorialMessage = "左右にスワイプしてページを移動できます。",
+        zoomPageNavigationTutorialTitle = "拡大中にページをめくる",
+        zoomPageNavigationTutorialMessage = "ズームを解除せずにページを移動するには、左右の矢印を使います。ドラッグは画像の端で止まります。",
     )
 
 private fun koreanStrings(): AppStrings =
@@ -885,6 +895,8 @@ private fun koreanStrings(): AppStrings =
         restoreReaderHudTutorialMessage = "화면의 빈 곳을 두 번 탭하면 읽기 컨트롤을 다시 볼 수 있습니다.",
         swipePageTutorialTitle = "페이지 넘기기",
         swipePageTutorialMessage = "왼쪽이나 오른쪽으로 밀어 페이지를 넘길 수 있습니다.",
+        zoomPageNavigationTutorialTitle = "확대 상태에서 페이지 넘기기",
+        zoomPageNavigationTutorialMessage = "확대를 해제하지 않고 페이지를 넘기려면 옆 화살표를 누르세요. 끌기는 이미지 가장자리에서 멈춥니다.",
     )
 
 private fun simplifiedChineseStrings(): AppStrings =
@@ -1028,6 +1040,8 @@ private fun simplifiedChineseStrings(): AppStrings =
         restoreReaderHudTutorialMessage = "双击屏幕的空白区域即可再次显示阅读控件。",
         swipePageTutorialTitle = "翻页",
         swipePageTutorialMessage = "向左或向右滑动即可翻页。",
+        zoomPageNavigationTutorialTitle = "缩放时翻页",
+        zoomPageNavigationTutorialMessage = "使用两侧箭头即可在不退出缩放的情况下翻页。拖动会停在图片边缘。",
     )
 
 private fun traditionalChineseStrings(): AppStrings =
@@ -1171,6 +1185,8 @@ private fun traditionalChineseStrings(): AppStrings =
         restoreReaderHudTutorialMessage = "輕觸螢幕空白處兩下，即可再次顯示閱讀控制項。",
         swipePageTutorialTitle = "換頁",
         swipePageTutorialMessage = "向左或向右滑動即可換頁。",
+        zoomPageNavigationTutorialTitle = "縮放時換頁",
+        zoomPageNavigationTutorialMessage = "使用兩側箭頭即可在不退出縮放的情況下換頁。拖動會停在圖片邊緣。",
     )
 
 fun AppSection.localizedLabel(strings: AppStrings): String = when (this) {

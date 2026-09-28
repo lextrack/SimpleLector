@@ -49,6 +49,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -102,10 +104,12 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import androidx.compose.ui.focus.FocusRequester
@@ -207,6 +211,20 @@ fun ReaderScreen(
     LaunchedEffect(activeBook.id, state.section) {
         if (state.section == AppSection.Reader) {
             readerFocusRequester.requestFocus()
+        }
+    }
+    LaunchedEffect(activeBook.id, isZoomableVisualBook, visualZoomLevel, readerTutorial) {
+        if (
+            isZoomableVisualBook &&
+            visualZoomLevel > 1.01f &&
+            readerTutorial == null &&
+            !state.hasSeenZoomPageNavigationTutorial
+        ) {
+            delay(450)
+            if (visualZoomLevel > 1.01f && readerTutorial == null) {
+                state.hasSeenZoomPageNavigationTutorial = true
+                readerTutorial = ReaderTutorial.ZoomPageNavigation
+            }
         }
     }
     LaunchedEffect(bookmarkFeedback) {
@@ -485,6 +503,32 @@ fun ReaderScreen(
                 label = "readerPageTransition",
                 content = { pageNumber -> pageContentSlot(pageNumber) },
             )
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isZoomableVisualBook && visualZoomLevel > 1.01f && activeBook.progressPage > 1,
+                modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp),
+                enter = fadeIn(animationSpec = readerAnimationSpec()),
+                exit = fadeOut(animationSpec = readerAnimationSpec()),
+                label = "zoomPreviousPage",
+            ) {
+                ZoomPageEdgeButton(
+                    previous = true,
+                    contentDescription = strings.previous,
+                    onClick = { state.updateProgress(activeBook.progressPage - 1) },
+                )
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isZoomableVisualBook && visualZoomLevel > 1.01f && activeBook.progressPage < activeBook.totalPages,
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp),
+                enter = fadeIn(animationSpec = readerAnimationSpec()),
+                exit = fadeOut(animationSpec = readerAnimationSpec()),
+                label = "zoomNextPage",
+            ) {
+                ZoomPageEdgeButton(
+                    previous = false,
+                    contentDescription = strings.next,
+                    onClick = { state.updateProgress(activeBook.progressPage + 1) },
+                )
+            }
         }
 
         activeNote?.let { link ->
@@ -659,14 +703,20 @@ fun ReaderScreen(
             onDismissRequest = dismissReaderTutorial,
             title = {
                 Text(
-                    if (tutorial == ReaderTutorial.RestoreHud) strings.restoreReaderHudTutorialTitle
-                    else strings.swipePageTutorialTitle,
+                    when (tutorial) {
+                        ReaderTutorial.RestoreHud -> strings.restoreReaderHudTutorialTitle
+                        ReaderTutorial.SwipePages -> strings.swipePageTutorialTitle
+                        ReaderTutorial.ZoomPageNavigation -> strings.zoomPageNavigationTutorialTitle
+                    },
                 )
             },
             text = {
                 Text(
-                    if (tutorial == ReaderTutorial.RestoreHud) strings.restoreReaderHudTutorialMessage
-                    else strings.swipePageTutorialMessage,
+                    when (tutorial) {
+                        ReaderTutorial.RestoreHud -> strings.restoreReaderHudTutorialMessage
+                        ReaderTutorial.SwipePages -> strings.swipePageTutorialMessage
+                        ReaderTutorial.ZoomPageNavigation -> strings.zoomPageNavigationTutorialMessage
+                    },
                 )
             },
             confirmButton = {
@@ -675,6 +725,31 @@ fun ReaderScreen(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun ZoomPageEdgeButton(
+    previous: Boolean,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .size(48.dp)
+            .clickable(onClick = onClick),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 3.dp,
+        shadowElevation = 2.dp,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = if (previous) Icons.Filled.ChevronLeft else Icons.Filled.ChevronRight,
+                contentDescription = contentDescription,
+            )
+        }
     }
 }
 
@@ -1243,7 +1318,12 @@ private fun ReaderImageBlock(
             val verticalScrollState = rememberScrollState()
             val visualPageFocusRequester = remember { FocusRequester() }
             val scope = rememberCoroutineScope()
-            LaunchedEffect(block.imageBytes, zoomLevel) {
+            LaunchedEffect(block.imageBytes, currentPage) {
+                horizontalScrollState.scrollTo(0)
+                verticalScrollState.scrollTo(0)
+                visualPageFocusRequester.requestFocus()
+            }
+            LaunchedEffect(zoomLevel) {
                 if (zoomLevel <= 1.01f) {
                     horizontalScrollState.scrollTo(0)
                     verticalScrollState.scrollTo(0)
@@ -1292,9 +1372,10 @@ private fun ReaderImageBlock(
                             if (zoomLevel <= 1.01f) return@pointerInput
                             detectDragGestures { change, dragAmount ->
                                 change.consume()
+                                val desiredHorizontal = horizontalScrollState.value - dragAmount.x
                                 scope.launch {
                                     horizontalScrollState.scrollTo(
-                                        (horizontalScrollState.value - dragAmount.x).roundToInt().coerceIn(0, horizontalScrollState.maxValue),
+                                        desiredHorizontal.roundToInt().coerceIn(0, horizontalScrollState.maxValue),
                                     )
                                     verticalScrollState.scrollTo(
                                         (verticalScrollState.value - dragAmount.y).roundToInt().coerceIn(0, verticalScrollState.maxValue),
@@ -1588,6 +1669,7 @@ private enum class ReaderPanel {
 private enum class ReaderTutorial {
     RestoreHud,
     SwipePages,
+    ZoomPageNavigation,
 }
 
 private fun Modifier.readerTapNavigation(

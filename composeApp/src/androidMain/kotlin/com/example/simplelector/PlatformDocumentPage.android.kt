@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -47,6 +48,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.zip.ZipInputStream
 import kotlin.math.min
+import kotlin.math.max
 
 private const val CbzRenderMaxImageDimension = 2_000
 private const val NativeImageLogTag = "SimpleLectorNative"
@@ -279,45 +281,60 @@ actual fun PlatformDocumentPage(
                     imageOffset = Offset.Zero
                 }
             }
-            val transformState = rememberTransformableState { zoomChange, panChange, _ ->
-                val updatedZoom = (gestureZoom * zoomChange).coerceIn(0.4f, 3f)
-                gestureZoom = if (updatedZoom in 0.92f..1.08f) 1f else updatedZoom
-                imageOffset = if (gestureZoom <= 1.01f) {
-                    Offset.Zero
-                } else {
-                    imageOffset + panChange * gestureZoom
-                }
-                onZoomChange?.invoke(gestureZoom)
-            }
             BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight()
-                    .clipToBounds()
-                    .transformable(
-                        state = transformState,
-                        enabled = onZoomChange != null,
-                    ),
+                modifier = Modifier.fillMaxWidth().fillMaxHeight().clipToBounds(),
                 contentAlignment = Alignment.Center,
             ) {
                 val fitScale = min(
                     maxWidth.value / widthDp.value,
                     maxHeight.value / heightDp.value,
                 ).coerceAtMost(1f)
-                Image(
-                    bitmap = bitmap!!.asImageBitmap(),
-                    contentDescription = null,
+                val viewportWidthPx = with(density) { maxWidth.toPx() }
+                val viewportHeightPx = with(density) { maxHeight.toPx() }
+                val baseWidthPx = bitmap!!.width * fitScale
+                val baseHeightPx = bitmap!!.height * fitScale
+                val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+                    val updatedZoom = (gestureZoom * zoomChange).coerceIn(0.4f, 3f)
+                    gestureZoom = if (updatedZoom in 0.92f..1.08f) 1f else updatedZoom
+                    if (gestureZoom <= 1.01f) {
+                        imageOffset = Offset.Zero
+                    } else {
+                        val maxOffsetX = max(0f, (baseWidthPx * gestureZoom - viewportWidthPx) / 2f)
+                        val maxOffsetY = max(0f, (baseHeightPx * gestureZoom - viewportHeightPx) / 2f)
+                        val candidateX = imageOffset.x + panChange.x * gestureZoom
+                        val candidateY = imageOffset.y + panChange.y * gestureZoom
+                        imageOffset = Offset(
+                            x = candidateX.coerceIn(-maxOffsetX, maxOffsetX),
+                            y = candidateY.coerceIn(-maxOffsetY, maxOffsetY),
+                        )
+                    }
+                    onZoomChange?.invoke(gestureZoom)
+                }
+                Box(
                     modifier = Modifier
-                        .width(widthDp * fitScale)
-                        .height(heightDp * fitScale)
-                        .graphicsLayer {
-                            scaleX = gestureZoom
-                            scaleY = gestureZoom
-                            translationX = imageOffset.x
-                            translationY = imageOffset.y
-                        },
-                    contentScale = ContentScale.FillBounds,
-                )
+                        .fillMaxSize()
+                        .transformable(
+                            state = transformState,
+                            enabled = onZoomChange != null,
+                        )
+                        .clipToBounds(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Image(
+                        bitmap = bitmap!!.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .width(widthDp * fitScale)
+                            .height(heightDp * fitScale)
+                            .graphicsLayer {
+                                scaleX = gestureZoom
+                                scaleY = gestureZoom
+                                translationX = imageOffset.x
+                                translationY = imageOffset.y
+                            },
+                        contentScale = ContentScale.FillBounds,
+                    )
+                }
             }
         }
     }

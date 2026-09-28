@@ -20,6 +20,7 @@ class ReadingProgressStoreTest {
             readerSidePadding = 18,
             hasSeenRestoreReaderHudTutorial = true,
             hasSeenSwipePageTutorial = true,
+            hasSeenZoomPageNavigationTutorial = true,
         )
 
         val decoded = decodeSavedUiPreferences(encodeSavedUiPreferences(saved))
