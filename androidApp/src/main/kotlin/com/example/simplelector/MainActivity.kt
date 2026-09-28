@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.core.content.IntentCompat
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -171,7 +172,7 @@ private suspend fun MainActivity.openExternalBookFromIntent(
 private fun Intent.primaryBookUri(): Uri? =
     when (action) {
         Intent.ACTION_VIEW -> data
-        Intent.ACTION_SEND -> getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(this, Intent.EXTRA_STREAM, Uri::class.java)
             ?: clipData?.getItemAt(0)?.uri
             ?: data
         else -> null

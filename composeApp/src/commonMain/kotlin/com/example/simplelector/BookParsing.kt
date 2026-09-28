@@ -391,11 +391,42 @@ fun htmlToReaderBlocks(
     var anchorIndex = 0
     var imageIndex = 0
     var linkIndex = 0
+
+    fun replaceLink(attributes: String, body: String, isSuperscript: Boolean): String {
+        val href = extractHtmlAttribute(attributes, "href")?.trim().orEmpty()
+        val token = "[[LINK_$linkIndex]]"
+        val endToken = "[[ENDLINK_$linkIndex]]"
+        linkIndex += 1
+        if (href.isNotBlank()) {
+            navigationLinks[token] = ReaderInlineLink(
+                start = 0,
+                end = 0,
+                href = href,
+                kind = htmlLinkKind(
+                    attributes = attributes,
+                    href = href,
+                    labelHtml = body,
+                    isSuperscript = isSuperscript,
+                ),
+            )
+        }
+        return "$token$body$endToken"
+    }
+
     val prepared = html
         .replace(Regex("(?is)<!--.*?-->"), " ")
         .replace(Regex("(?is)<head\\b.*?</head>"), " ")
         .replace(Regex("(?is)<script.*?</script>"), " ")
         .replace(Regex("(?is)<style.*?</style>"), " ")
+        // EPUB 2 files frequently express note calls only through a superscript
+        // numeric link, without epub:type="noteref" or an ARIA role.
+        .replace(Regex("(?is)<sup\\b[^>]*>\\s*<a\\b([^>]*)>(.*?)</a>\\s*</sup>")) { match ->
+            replaceLink(
+                attributes = match.groupValues[1],
+                body = match.groupValues[2],
+                isSuperscript = true,
+            )
+        }
         .replace(Regex("""(?is)<([a-z0-9]+)\b([^>]*\b(?:id|name|xml:id)\s*=\s*['"][^'"]+['"][^>]*)>""")) { match ->
             val attributes = match.groupValues[2]
             val anchorId = extractHtmlAnchorId(attributes)?.trim().orEmpty()
@@ -409,15 +440,11 @@ fun htmlToReaderBlocks(
             }
         }
         .replace(Regex("(?is)<a\\b([^>]*)>(.*?)</a>")) { match ->
-            val attributes = match.groupValues[1]
-            val href = extractHtmlAttribute(attributes, "href")?.trim().orEmpty()
-            val token = "[[LINK_$linkIndex]]"
-            val endToken = "[[ENDLINK_$linkIndex]]"
-            linkIndex += 1
-            if (href.isNotBlank()) {
-                navigationLinks[token] = ReaderInlineLink(0, 0, href, htmlLinkKind(attributes, href))
-            }
-            "$token${match.groupValues[2]}$endToken"
+            replaceLink(
+                attributes = match.groupValues[1],
+                body = match.groupValues[2],
+                isSuperscript = false,
+            )
         }
         .replace(Regex("(?i)<img\\b([^>]*?)(?:/?)>")) { match ->
             val attributes = match.groupValues[1]
@@ -503,16 +530,112 @@ fun htmlToReaderBlocks(
         }
 }
 
-private fun htmlLinkKind(attributes: String, href: String): ReaderLinkKind {
-    val semantics = listOfNotNull(extractHtmlAttribute(attributes, "epub:type"), extractHtmlAttribute(attributes, "role"), extractHtmlAttribute(attributes, "class"))
-        .joinToString(" ").lowercase()
+private fun htmlLinkKind(
+    attributes: String,
+    href: String,
+    labelHtml: String,
+    isSuperscript: Boolean,
+): ReaderLinkKind {
+    if (
+        href.startsWith("//") ||
+        Regex("""^[a-z][a-z0-9+.-]*:""", RegexOption.IGNORE_CASE).containsMatchIn(href)
+    ) {
+        return ReaderLinkKind.External
+    }
+
+    val semantics = listOfNotNull(
+        extractHtmlAttribute(attributes, "epub:type"),
+        extractHtmlAttribute(attributes, "role"),
+        extractHtmlAttribute(attributes, "class"),
+        extractHtmlAttribute(attributes, "rel"),
+        extractHtmlAttribute(attributes, "type"),
+        extractHtmlAttribute(attributes, "aria-label"),
+        extractHtmlAttribute(attributes, "title"),
+    ).joinToString(" ").lowercase()
+    val label = labelHtml
+        .replace(Regex("<[^>]+>"), "")
+        .decodeHtmlEntities()
+        .trim()
     return when {
-        "noteref" in semantics || "doc-noteref" in semantics -> ReaderLinkKind.NoteReference
-        "backlink" in semantics || "doc-backlink" in semantics -> ReaderLinkKind.Backlink
-        href.startsWith("//") || href.matches(Regex("""^[a-z][a-z0-9+.-]*:""", RegexOption.IGNORE_CASE)) -> ReaderLinkKind.External
+        semantics.hasHtmlSemantic(NoteBacklinkSemantics) -> ReaderLinkKind.Backlink
+        semantics.hasHtmlSemantic(NoteReferenceSemantics) -> ReaderLinkKind.NoteReference
+        href.hasLikelyNoteBacklinkTarget() -> ReaderLinkKind.Backlink
+        href.hasLikelyNoteTarget() -> ReaderLinkKind.NoteReference
+        isSuperscript && href.contains('#') && label.isLikelyNoteCallLabel() -> ReaderLinkKind.NoteReference
         else -> ReaderLinkKind.Internal
     }
 }
+
+private val NoteReferenceSemantics = setOf(
+    "noteref",
+    "doc-noteref",
+    "footnote",
+    "footnote-ref",
+    "footnoteref",
+    "footnote_reference",
+    "footnotereference",
+    "endnote",
+    "endnote-ref",
+    "endnoteref",
+    "endnote_reference",
+    "endnotereference",
+    "fnref",
+    "note-ref",
+    "note_ref",
+    "notereference",
+)
+
+private val NoteBacklinkSemantics = setOf(
+    "backlink",
+    "doc-backlink",
+    "backref",
+    "footnote-back",
+    "footnote-backlink",
+    "footnote_backlink",
+    "footnotebacklink",
+    "note-backlink",
+    "note_backlink",
+)
+
+private fun String.hasHtmlSemantic(candidates: Set<String>): Boolean =
+    lowercase()
+        .split(Regex("[^a-z0-9_-]+"))
+        .filter { it.isNotBlank() }
+        .any { token -> token in candidates }
+
+private fun String.hasLikelyNoteTarget(): Boolean {
+    val fragment = normalizedHrefFragment()
+    if (fragment.isBlank()) return false
+    return fragment.matches(
+        Regex(
+            """(?:_?ftn\d+|sdfootnote\d+(?:sym)?|cite_note(?:\d+|[-_.:].+)|(?:fn|n|note|footnote|endnote)(?:[-_.:]?\d+|[-_.:].+)?)""",
+        ),
+    )
+}
+
+private fun String.hasLikelyNoteBacklinkTarget(): Boolean {
+    val fragment = normalizedHrefFragment()
+    if (fragment.isBlank()) return false
+    return fragment.matches(
+        Regex(
+            """(?:_?ftnref|fnref|noteref|footnoteref|endnoteref|backref)(?:[-_.:]?\d+|[-_.:].+)?""",
+        ),
+    )
+}
+
+private fun String.normalizedHrefFragment(): String =
+    substringAfter('#', missingDelimiterValue = "")
+        .substringBefore('?')
+        .lowercase()
+        .replace(Regex("%([0-9a-f]{2})")) { match ->
+            match.groupValues[1].toIntOrNull(16)?.toChar()?.toString() ?: match.value
+        }
+        .trim()
+
+private fun String.isLikelyNoteCallLabel(): Boolean =
+    replace("\u00A0", "")
+        .replace(Regex("\\s+"), "")
+        .matches(Regex("""[\[(]?(?:\d{1,4}|[ivxlcdm]{1,8}|[*†‡§])[\])]?[.,]?""", RegexOption.IGNORE_CASE))
 
 private fun extractInlineLinks(raw: String, cleanedText: String, links: Map<String, ReaderInlineLink>): List<ReaderInlineLink> {
     var cursor = 0

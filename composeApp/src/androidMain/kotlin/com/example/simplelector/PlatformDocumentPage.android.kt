@@ -5,8 +5,6 @@ import android.graphics.Matrix
 import android.graphics.pdf.PdfRenderer
 import android.content.pm.ActivityInfo
 import android.net.Uri
-import android.view.WindowInsets
-import android.view.WindowInsetsController
 import android.view.WindowManager
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -42,6 +40,8 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -335,18 +335,16 @@ actual fun PlatformReaderWindowEffect(
     val window = activity.window
 
     DisposableEffect(fullscreen) {
-        WindowCompat.setDecorFitsSystemWindows(window, !fullscreen)
+        val insetsController = WindowCompat.getInsetsController(window, view)
         if (fullscreen) {
-            window.insetsController?.apply {
-                hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-                systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            }
+            insetsController.hide(WindowInsetsCompat.Type.systemBars())
+            insetsController.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         } else {
-            window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+            insetsController.show(WindowInsetsCompat.Type.systemBars())
         }
         onDispose {
-            WindowCompat.setDecorFitsSystemWindows(window, true)
-            window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+            insetsController.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 

@@ -3,6 +3,7 @@ package com.example.simplelector
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class BookParsingTest {
     @Test
@@ -273,6 +274,66 @@ class BookParsingTest {
         assertEquals(ReaderLinkKind.NoteReference, block.inlineLinks[0].kind)
         assertEquals("1", block.text.substring(block.inlineLinks[0].start, block.inlineLinks[0].end))
         assertEquals("ver", block.text.substring(block.inlineLinks[1].start, block.inlineLinks[1].end))
+    }
+
+    @Test
+    fun htmlToReaderBlocks_recognizesCommonLegacyFootnoteConventions() {
+        val block = htmlToReaderBlocks(
+            """
+                <p>Texto
+                  <a class="footnote" href="#legacy-a">[1]</a>
+                  <a rel="footnote" href="#legacy-b">[2]</a>
+                  <a type="noteref" href="#legacy-c">[3]</a>
+                  <a href="#fn4">[4]</a>
+                  <sup><a href="#legacy-d">5</a></sup>
+                </p>
+            """.trimIndent(),
+            resolveImage = { null },
+        ).single()
+
+        assertEquals(5, block.inlineLinks.size)
+        assertTrue(block.inlineLinks.all { it.kind == ReaderLinkKind.NoteReference })
+    }
+
+    @Test
+    fun htmlToReaderBlocks_doesNotTreatOrdinaryNumericNavigationAsFootnote() {
+        val block = htmlToReaderBlocks(
+            "<p>Consulta la <a href=\"#chapter2\">sección 2</a> y la <a href=\"#page2\">página 2</a>.</p>",
+            resolveImage = { null },
+        ).single()
+
+        assertEquals(2, block.inlineLinks.size)
+        assertTrue(block.inlineLinks.all { it.kind == ReaderLinkKind.Internal })
+    }
+
+    @Test
+    fun htmlToReaderBlocks_keepsExternalFootnoteStyledLinksExternal() {
+        val block = htmlToReaderBlocks(
+            "<p><a class=\"footnote\" href=\"https://example.com/note\">Fuente</a></p>",
+            resolveImage = { null },
+        ).single()
+
+        assertEquals(ReaderLinkKind.External, block.inlineLinks.single().kind)
+    }
+
+    @Test
+    fun htmlToReaderBlocks_prefersExplicitBacklinkSemantics() {
+        val block = htmlToReaderBlocks(
+            "<p><a class=\"footnote backlink\" href=\"#fnref1\">Volver</a></p>",
+            resolveImage = { null },
+        ).single()
+
+        assertEquals(ReaderLinkKind.Backlink, block.inlineLinks.single().kind)
+    }
+
+    @Test
+    fun htmlToReaderBlocks_recognizesLegacyBacklinkTargets() {
+        val block = htmlToReaderBlocks(
+            "<p><a href=\"#_ftnref1\">Volver</a> <a href=\"#fnref2\">Regresar</a></p>",
+            resolveImage = { null },
+        ).single()
+
+        assertTrue(block.inlineLinks.all { it.kind == ReaderLinkKind.Backlink })
     }
 
     @Test
